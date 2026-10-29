@@ -48,37 +48,32 @@ async fn percent_encoded_unreserved_characters_match_their_decoded_form() {
 }
 
 #[tokio::test]
-async fn method_matching_is_case_sensitive() {
+async fn method_case_does_not_fall_through_to_method_less_rule() {
     let c = load(&[ACME]).await.unwrap();
     assert_eq!(
         c.classify("DELETE", "api.acme.com", "/v1/charges/ch_1")
             .await,
         Some("payment.refund")
     );
-    for method in ["delete", "Delete"] {
+    for method in ["DELETE", "delete", "Delete"] {
         assert_eq!(
             c.classify(method, "api.acme.com", "/v1/charges/ch_1").await,
-            Some("payment.read"),
+            Some("payment.refund"),
             "{method}"
         );
     }
 }
 
 #[tokio::test]
-async fn duplicate_path_segments_are_preserved_for_matching() {
+async fn empty_path_segments_are_unclassified() {
     let c = load(&[ACME]).await.unwrap();
-    assert_eq!(
-        c.classify("POST", "api.acme.com", "/v1//refunds/x").await,
-        Some("payment.read")
-    );
-    assert_eq!(
-        c.classify("POST", "api.acme.com", "//v1/refunds/x").await,
-        None
-    );
-    assert_eq!(
-        c.classify("POST", "api.acme.com", "/v1/refunds//x").await,
-        Some("payment.refund")
-    );
+    for path in ["/v1//refunds/x", "//v1/refunds/x", "/v1/refunds//x"] {
+        assert_eq!(
+            c.classify("POST", "api.acme.com", path).await,
+            None,
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]

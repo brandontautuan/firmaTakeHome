@@ -28,10 +28,12 @@ pub(crate) fn host(input: &str) -> Option<String> {
     Some(name.to_ascii_lowercase())
 }
 
-/// Validates an HTTP token without changing its case. HTTP method tokens are
-/// case-sensitive, so `GET` and `get` are distinct matcher values.
+/// Validates an HTTP token and folds it to uppercase. HTTP methods are
+/// case-sensitive on the wire, but clients and servers commonly normalize
+/// them; folding prevents a lowercase spelling from bypassing a stricter
+/// uppercase rule and falling through to a broader rule.
 pub(crate) fn method(input: &str) -> Option<String> {
-    (!input.is_empty() && input.bytes().all(is_http_token)).then(|| input.into())
+    (!input.is_empty() && input.bytes().all(is_http_token)).then(|| input.to_ascii_uppercase())
 }
 
 /// Normalizes a request path. Empty input represents the origin-form `/`.
@@ -56,13 +58,16 @@ pub(crate) fn pattern_path(input: &str) -> Option<String> {
 
 /// Canonical form shared by requests and patterns: unreserved percent escapes
 /// decoded, other escapes upper-cased, and dot segments removed. Empty path
-/// segments and trailing slashes are preserved; backslashes and encoded
-/// separators are rejected because servers disagree on what they mean.
+/// segments, backslashes, and encoded separators are rejected because servers
+/// disagree on what they mean.
 fn normalize_path(input: &str, pattern: bool) -> Option<String> {
     if !input.starts_with('/') {
         return None;
     }
     let decoded = decode_unreserved(input)?;
+    if decoded.contains("//") {
+        return None;
+    }
 
     // A dot segment next to a wildcard cannot be canonicalized soundly: the
     // wildcard can span an unknown number of path segments. Reject rather than
@@ -122,50 +127,30 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
-/// RFC 3986 dot-segment removal for a validated absolute path. Empty path
-/// segments are copied verbatim, so duplicate and trailing slashes retain
-/// their meaning for the matcher.
+/// RFC 3986 dot-segment removal for an absolute path without empty segments.
+/// A stack keeps this linear in the path length.
 fn remove_dot_segments(input: &str) -> String {
-    let mut remaining = input.to_owned();
-    let mut output = String::with_capacity(input.len());
-    while !remaining.is_empty() {
-        if remaining.starts_with("../") {
-            remaining.drain(..3);
-        } else if remaining.starts_with("./") {
-            remaining.drain(..2);
-        } else if remaining == "/." {
-            remaining.replace_range(.., "/");
-        } else if remaining.starts_with("/./") {
-            remaining.replace_range(..3, "/");
-        } else if remaining == "/.." {
-            remaining.replace_range(.., "/");
-            pop_last_segment(&mut output);
-        } else if remaining.starts_with("/../") {
-            remaining.replace_range(..4, "/");
-            pop_last_segment(&mut output);
-        } else if remaining == "." || remaining == ".." {
-            remaining.clear();
-        } else {
-            let end = if let Some(stripped) = remaining.strip_prefix('/') {
-                stripped
-                    .find('/')
-                    .map_or(remaining.len(), |index| index + 1)
-            } else {
-                remaining.find('/').unwrap_or(remaining.len())
-            };
-            output.push_str(&remaining[..end]);
-            remaining.drain(..end);
+    let mut segments = Vec::new();
+    // A path ending in `.` or `..` names a directory, as `/a/b/..` -> `/a/`.
+    let mut trailing_slash = false;
+    for segment in input.split('/').skip(1) {
+        match segment {
+            "." => trailing_slash = true,
+            ".." => {
+                segments.pop();
+                trailing_slash = true;
+            }
+            _ => {
+                segments.push(segment);
+                trailing_slash = false;
+            }
         }
     }
-    output
-}
-
-fn pop_last_segment(output: &mut String) {
-    if let Some(index) = output.rfind('/') {
-        output.truncate(index);
-    } else {
-        output.clear();
+    let mut output = format!("/{}", segments.join("/"));
+    if trailing_slash && !output.ends_with('/') {
+        output.push('/');
     }
+    output
 }
 
 fn is_dns_name(value: &str) -> bool {
@@ -226,10 +211,10 @@ mod tests {
     }
 
     #[test]
-    fn methods_are_case_sensitive_tokens() {
+    fn methods_are_tokens_folded_to_upper_case() {
         assert_eq!(method("GET"), Some("GET".into()));
-        assert_eq!(method("delete"), Some("delete".into()));
-        assert_eq!(method("Patch"), Some("Patch".into()));
+        assert_eq!(method("delete"), Some("DELETE".into()));
+        assert_eq!(method("Patch"), Some("PATCH".into()));
         for value in ["", "GET ", "GET\n", "é"] {
             assert_eq!(method(value), None, "{value:?}");
         }
@@ -244,13 +229,8 @@ mod tests {
         assert_eq!(request_path("/a/./b/."), Some("/a/b/".into()));
         assert_eq!(request_path("/../../x"), Some("/x".into()));
         assert_eq!(request_path("/v1/payments/"), Some("/v1/payments/".into()));
-        assert_eq!(request_path("/v1//payments"), Some("/v1//payments".into()));
-        assert_eq!(
-            request_path("//v1/payments/"),
-            Some("//v1/payments/".into())
-        );
         for value in [
-            "relative", "/x%ZZ", "/x%2f", "/x%5C", "/x\\y", "/é", "/a b", "/a\0",
+            "relative", "/x%ZZ", "/x%2f", "/x%5C", "/x\\y", "/é", "/a b", "/a\0", "/v1//x", "//",
         ] {
             assert_eq!(request_path(value), None, "{value:?}");
         }
@@ -280,7 +260,7 @@ mod tests {
         );
         assert_eq!(pattern_path("/v1/*/../admin"), None);
         assert_eq!(pattern_path("/v1/*?debug=true"), None);
-        assert_eq!(pattern_path("/v1//x"), Some("/v1//x".into()));
+        assert_eq!(pattern_path("/v1//x"), None);
     }
 
     #[test]
