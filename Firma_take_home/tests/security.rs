@@ -154,6 +154,17 @@ async fn case_insensitive_routing_disagreements_are_unclassified() {
         None
     );
 
+    let capitalized_refunds = ACME.replace("/v1/refunds/*", "/v1/Refunds/*");
+    let c = load(&[&capitalized_refunds]).await.unwrap();
+    assert_eq!(
+        c.classify("POST", "api.acme.com", "/v1/Refunds/r1").await,
+        Some("payment.refund")
+    );
+    assert_eq!(
+        c.classify("POST", "api.acme.com", "/v1/refunds/r1").await,
+        None
+    );
+
     let uppercase_id_route = r#"
 format_version = 1
 name = "Case sensitive IDs"
@@ -168,6 +179,34 @@ action_class = "repo.read"
     assert_eq!(
         c.classify("GET", "api.acme.com", "/v1/IDs/AbC").await,
         Some("repo.read")
+    );
+
+    let twilio_style = r#"
+format_version = 1
+name = "Twilio style"
+host = "example.com"
+
+[[rules]]
+subdomain = "api"
+method = "GET"
+path = "/2010-04-01/*"
+action_class = "repo.read"
+
+[[rules]]
+subdomain = "api"
+method = "GET"
+path = "/2010-04-01/Accounts/*/Messages.json"
+action_class = "communication.external.send"
+"#;
+    let c = load(&[twilio_style]).await.unwrap();
+    assert_eq!(
+        c.classify(
+            "GET",
+            "api.example.com",
+            "/2010-04-01/Accounts/AC1/Messages.json"
+        )
+        .await,
+        Some("communication.external.send")
     );
 }
 

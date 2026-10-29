@@ -16,6 +16,7 @@ pub(crate) struct CompiledRule {
     pub(crate) method: Option<String>,
     pub(crate) host: HostPattern,
     pub(crate) path: Option<String>,
+    folded_path: Option<String>,
     pub(crate) action_class: &'static str,
     specificity: Specificity,
 }
@@ -98,6 +99,9 @@ impl CompiledRule {
             Some(value) => Some(normalize::pattern_path(value).ok_or(CompileError::Path)?),
             None => None,
         };
+        let folded_path = path
+            .as_deref()
+            .map(normalize::lowercase_path_outside_escapes);
         let action_class = ACTION_CLASSES
             .iter()
             .copied()
@@ -108,19 +112,28 @@ impl CompiledRule {
             method,
             host,
             path,
+            folded_path,
             action_class,
             specificity,
         })
     }
 
-    pub(crate) fn matches(&self, method: &str, host: &str, path: &str) -> bool {
+    pub(crate) fn matches(
+        &self,
+        method: &str,
+        host: &str,
+        path: &str,
+        case_folded_path: bool,
+    ) -> bool {
         self.method
             .as_deref()
             .is_none_or(|expected| expected == method)
             && host_matches(&self.host, host)
             && self
-                .path
+                .folded_path
                 .as_deref()
+                .filter(|_| case_folded_path)
+                .or(self.path.as_deref())
                 .is_none_or(|pattern| glob_matches(pattern, path))
     }
 
@@ -340,9 +353,9 @@ mod tests {
     #[test]
     fn wildcard_hosts_respect_boundaries_and_nested_subdomains() {
         let rule = rule(Some("*"), None, None, "payment.read");
-        assert!(rule.matches("GET", "a.b.acme.com", "/"));
-        assert!(!rule.matches("GET", "acme.com", "/"));
-        assert!(!rule.matches("GET", "evilacme.com", "/"));
+        assert!(rule.matches("GET", "a.b.acme.com", "/", false));
+        assert!(!rule.matches("GET", "acme.com", "/", false));
+        assert!(!rule.matches("GET", "evilacme.com", "/", false));
     }
 
     #[test]
@@ -417,10 +430,10 @@ mod tests {
         let any_method = rule(Some("api"), None, Some("/v1/*"), "payment.read");
         let get = rule(Some("api"), Some("GET"), Some("/v1/*"), "payment.create");
         assert!(get.compare_specificity(&any_method).is_gt());
-        assert!(get.matches("GET", "api.acme.com", "/v1/x"));
+        assert!(get.matches("GET", "api.acme.com", "/v1/x", false));
         // `matches` receives normalized method tokens from `classify`.
-        assert!(!get.matches("get", "api.acme.com", "/v1/x"));
-        assert!(!get.matches("POST", "api.acme.com", "/v1/x"));
+        assert!(!get.matches("get", "api.acme.com", "/v1/x", false));
+        assert!(!get.matches("POST", "api.acme.com", "/v1/x", false));
         let lower = rule(Some("api"), Some("get"), Some("/v1/*"), "payment.create");
         assert_eq!(lower.method.as_deref(), Some("GET"));
     }

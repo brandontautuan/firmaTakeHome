@@ -440,13 +440,13 @@ Normalize incoming request metadata before matching.
 #### Path
 
 - Empty path becomes `/`.
-- Reject a request path input longer than 8 KiB before stripping a query or fragment.
+- Reject a request path longer than 8 KiB after removing its query or fragment.
 - Remove query strings and fragments before matching.
 - Require a leading `/` for nonempty paths.
 - Reject duplicate slashes (empty segments): servers disagree on whether `//` collapses.
 - Reject literal semicolons: Tomcat, Jetty, and Spring-style servers may strip path parameters before routing.
 - Keep trailing slashes. When a request path ends in `/`, also compare the slash-stripped spelling; if it classifies to a different action, return `None`. This protects against servers that strip a sent trailing slash while preserving the classification of a request sent without one.
-- Also compare an ASCII-lowercased spelling outside percent escapes, plus its slash-stripped spelling when applicable. If any such spelling has a different nonempty classification, return `None`. This detects disagreement with common case-insensitive routers while retaining the original case-sensitive match when no alternate rule applies; it only detects the conventional lowercase rule spelling.
+- Also compare an ASCII-lowercased spelling outside percent escapes against lowercased compiled rule patterns, plus its slash-stripped spelling when applicable. If any such spelling has a different nonempty classification, return `None`. This detects disagreement with common case-insensitive routers without changing the case-sensitive match itself.
 - Decode escaped unreserved characters, so `%72efunds` matches `refunds` and `%2e%2e` is a dot segment.
 - Normalize dot segments.
 - Reject malformed percent encoding.
@@ -683,8 +683,8 @@ Configuration limits are deliberate: a normalized path pattern is at most
 analysis spends at most 4,000,000 product-NFA states across the entire load.
 The limits bound configuration-controlled memory and CPU use while preserving
 the linear runtime scan.
-Request inputs are also bounded: methods are at most 32 bytes and raw path
-inputs are at most 8 KiB before query or fragment handling.
+Request inputs are also bounded: methods are at most 32 bytes and paths are
+at most 8 KiB after query or fragment handling.
 
 The public functions remain asynchronous because the starter API requires it, but internal parsing and matching do not require asynchronous tasks.
 

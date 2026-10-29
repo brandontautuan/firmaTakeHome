@@ -52,11 +52,11 @@ pub(crate) fn method(input: &str) -> Option<String> {
 
 /// Normalizes a request path. Empty input represents the origin-form `/`.
 pub(crate) fn request_path(input: &str) -> Option<String> {
-    if input.len() > MAX_REQUEST_PATH_BYTES {
-        return None;
-    }
     let end = input.find(['?', '#']).unwrap_or(input.len());
     let path = &input[..end];
+    if path.len() > MAX_REQUEST_PATH_BYTES {
+        return None;
+    }
     if path.is_empty() {
         return Some("/".into());
     }
@@ -83,9 +83,13 @@ pub(crate) fn lowercase_path_outside_escapes(path: &str) -> String {
     while index < bytes.len() {
         if bytes[index] == b'%' {
             output.push('%');
-            output.push(char::from(bytes[index + 1]));
-            output.push(char::from(bytes[index + 2]));
-            index += 3;
+            if let Some(&byte) = bytes.get(index + 1) {
+                output.push(char::from(byte));
+            }
+            if let Some(&byte) = bytes.get(index + 2) {
+                output.push(char::from(byte));
+            }
+            index = index.saturating_add(3);
         } else {
             output.push(char::from(bytes[index].to_ascii_lowercase()));
             index += 1;

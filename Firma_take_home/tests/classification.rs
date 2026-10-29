@@ -206,4 +206,14 @@ async fn request_size_limits_fail_closed_at_the_boundary() {
             .await,
         None
     );
+    assert_eq!(
+        classifier
+            .classify(
+                "GET",
+                "api.acme.com",
+                &format!("/v1/x?q={}", "a".repeat(8_200))
+            )
+            .await,
+        Some("payment.read")
+    );
 }
