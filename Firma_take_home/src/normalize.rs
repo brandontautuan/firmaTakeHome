@@ -28,12 +28,10 @@ pub(crate) fn host(input: &str) -> Option<String> {
     Some(name.to_ascii_lowercase())
 }
 
-/// Validates an HTTP token and upper-cases it. Methods are case-sensitive on
-/// the wire, but clients (Fetch, Node) upper-case common methods and some
-/// servers fold case. Folding here keeps `delete` from slipping past a
-/// `DELETE` rule into a broader method-less one.
+/// Validates an HTTP token without changing its case. HTTP method tokens are
+/// case-sensitive, so `GET` and `get` are distinct matcher values.
 pub(crate) fn method(input: &str) -> Option<String> {
-    (!input.is_empty() && input.bytes().all(is_http_token)).then(|| input.to_ascii_uppercase())
+    (!input.is_empty() && input.bytes().all(is_http_token)).then(|| input.into())
 }
 
 /// Normalizes a request path. Empty input represents the origin-form `/`.
@@ -211,10 +209,10 @@ mod tests {
     }
 
     #[test]
-    fn methods_are_tokens_folded_to_upper_case() {
+    fn methods_are_case_sensitive_tokens() {
         assert_eq!(method("GET"), Some("GET".into()));
-        assert_eq!(method("delete"), Some("DELETE".into()));
-        assert_eq!(method("Patch"), Some("PATCH".into()));
+        assert_eq!(method("delete"), Some("delete".into()));
+        assert_eq!(method("Patch"), Some("Patch".into()));
         for value in ["", "GET ", "GET\n", "é"] {
             assert_eq!(method(value), None, "{value:?}");
         }

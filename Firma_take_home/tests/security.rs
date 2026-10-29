@@ -48,12 +48,17 @@ async fn percent_encoded_unreserved_characters_match_their_decoded_form() {
 }
 
 #[tokio::test]
-async fn method_case_does_not_fall_through_to_method_less_rule() {
+async fn method_matching_is_case_sensitive() {
     let c = load(&[ACME]).await.unwrap();
-    for method in ["DELETE", "delete", "Delete"] {
+    assert_eq!(
+        c.classify("DELETE", "api.acme.com", "/v1/charges/ch_1")
+            .await,
+        Some("payment.refund")
+    );
+    for method in ["delete", "Delete"] {
         assert_eq!(
             c.classify(method, "api.acme.com", "/v1/charges/ch_1").await,
-            Some("payment.refund"),
+            Some("payment.read"),
             "{method}"
         );
     }

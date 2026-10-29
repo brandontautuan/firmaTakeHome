@@ -329,8 +329,9 @@ mod tests {
         let get = rule(Some("api"), Some("GET"), Some("/v1/*"), "payment.create");
         assert!(get.compare_specificity(&any_method).is_gt());
         assert!(get.matches("GET", "api.acme.com", "/v1/x"));
+        assert!(!get.matches("get", "api.acme.com", "/v1/x"));
         assert!(!get.matches("POST", "api.acme.com", "/v1/x"));
         let lower = rule(Some("api"), Some("get"), Some("/v1/*"), "payment.create");
-        assert_eq!(lower.method.as_deref(), Some("GET"));
+        assert_eq!(lower.method.as_deref(), Some("get"));
     }
 }
