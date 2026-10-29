@@ -62,6 +62,11 @@ Methods: HTTP tokens, folded to uppercase in rules and requests so `delete` cann
 
 Paths: Empty request path normalizes to /; nonempty path must begin /. Drop query/fragment before matching (reject them in patterns). Reject empty segments (`//`), backslashes and non-graphic bytes. Keep trailing slashes; for a request ending in `/`, return None when its slash-stripped spelling has a different nonempty classification, because servers can strip the sent slash. Decode only escaped unreserved characters (RFC 3986 6.2.2) and upper-case other escapes, identically for rules and requests; never double-decode. Normalize dot segments; reject invalid percent encoding and encoded separators (%2F, %5C). A configured path must start with /; omission matches all valid paths; * matches zero or more characters including /, and multiple wildcards are supported. /v1/refunds/* matches /v1/refunds/ but not /v1/refunds.
 
+Loading limits: normalized configured path patterns are capped at 1,024 bytes,
+a classifier accepts at most 10,000 rules, and all eligible wildcard overlap
+checks share a 4,000,000-state budget. Unrelated hosts and same-class pairs do
+not consume this budget; an exhausted budget rejects the load explicitly.
+
 Specificity: Lexicographic ranking: (1) exact subdomain over wildcard for subdomain requests (bare-host rules only match bare host), (2) exact path > wildcard path > absent path; among wildcards, more literal characters > fewer wildcards > longer literal prefix, (3) explicit method > absent method. Never use file or insertion order to break ties. If any remaining equal-specificity rules could classify the same valid request differently, reject the configuration during load.
 
 Important security boundary: Matching URL metadata cannot reveal agent reasoning, authorization, request body, or provider-specific server decoding rules. Do not infer missing information. If normalization is ambiguous, return None for requests or reject the rule when loading. Document important limits.

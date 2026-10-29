@@ -23,6 +23,8 @@ pub const ACTION_CLASSES: &[&str] = &[
     "llm.inference",
 ];
 
+const MAX_TOTAL_RULES: usize = 10_000;
+
 /// Why a set of mapping files was rejected. Set and rule indexes are 0-based
 /// positions in the `sets` slice and the set's `rules` array.
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +53,8 @@ pub enum LoadError {
         first: RuleLocation,
         second: RuleLocation,
     },
+    #[error("mapping configuration contains more than {limit} rules")]
+    TooManyRules { limit: usize },
 }
 
 /// The reason a single mapping set is invalid.
@@ -110,6 +114,11 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
             error,
         })?;
         for (rule_index, rule) in set.rules.into_iter().enumerate() {
+            if rules.len() == MAX_TOTAL_RULES {
+                return Err(LoadError::TooManyRules {
+                    limit: MAX_TOTAL_RULES,
+                });
+            }
             // Validation already ran these checks, so this mapping only
             // guards against the two modules drifting apart.
             let compiled = CompiledRule::new(

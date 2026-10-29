@@ -4,6 +4,8 @@ use serde::Deserialize;
 
 use crate::{ACTION_CLASSES, SetError, normalize};
 
+const MAX_PATTERN_BYTES: usize = 1_024;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MappingSet {
@@ -74,13 +76,19 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
                 field: "subdomain",
             });
         }
-        if let Some(path) = &rule.path
-            && normalize::pattern_path(path).is_none()
-        {
-            return Err(SetError::InvalidRule {
-                rule: index,
-                field: "path",
-            });
+        if let Some(path) = &rule.path {
+            let Some(normalized) = normalize::pattern_path(path) else {
+                return Err(SetError::InvalidRule {
+                    rule: index,
+                    field: "path",
+                });
+            };
+            if normalized.len() > MAX_PATTERN_BYTES {
+                return Err(SetError::InvalidRule {
+                    rule: index,
+                    field: "path",
+                });
+            }
         }
     }
     Ok(())
@@ -292,6 +300,16 @@ rules = []
             "subdomain = \"api.eu\"\naction_class = \"payment.read\"",
         );
         assert!(parse(&input).is_ok());
+    }
+
+    #[test]
+    fn rejects_path_patterns_over_the_limit() {
+        let path = format!("/{}", "a".repeat(1_024));
+        let input = VALID.replace(
+            "action_class = \"payment.read\"",
+            &format!("path = {path:?}\naction_class = \"payment.read\""),
+        );
+        assert!(parse(&input).is_err());
     }
 
     #[test]

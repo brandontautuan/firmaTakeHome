@@ -117,7 +117,65 @@ async fn excessively_complex_wildcard_overlap_is_rejected() {
     );
     assert!(matches!(
         load(&[&a, &b]).await,
+        Err(LoadError::ConflictingRules { .. })
+    ));
+}
+
+#[tokio::test]
+async fn conflict_analysis_only_charges_eligible_pairs() {
+    let sets = (0..1_000)
+        .map(|index| {
+            set(
+                &format!("Host {index}"),
+                &format!("h{index}.example.com"),
+                &rule(None, None, Some("/x"), "repo.read"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let inputs = sets.iter().map(String::as_str).collect::<Vec<_>>();
+    assert!(load(&inputs).await.is_ok());
+}
+
+#[tokio::test]
+async fn same_class_rules_do_not_consume_overlap_budget() {
+    let rules = (0..600)
+        .map(|index| rule(None, None, Some(&format!("/rule/{index}")), "repo.read"))
+        .collect::<String>();
+    let input = set("Many exact paths", "acme.com", &rules);
+    assert!(load(&[&input]).await.is_ok());
+}
+
+#[tokio::test]
+async fn adversarial_wildcard_pairs_exhaust_total_overlap_budget() {
+    let rules = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| {
+            let path = format!("/{}{}", "*".repeat(1_022), char::from(*byte));
+            let class = if index % 2 == 0 {
+                "payment.read"
+            } else {
+                "payment.refund"
+            };
+            rule(None, None, Some(&path), class)
+        })
+        .collect::<String>();
+    let input = set("Adversarial", "acme.com", &rules);
+    assert!(matches!(
+        load(&[&input]).await,
         Err(LoadError::ConflictAnalysisTooComplex { .. })
+    ));
+}
+
+#[tokio::test]
+async fn rule_count_limit_has_a_dedicated_error() {
+    let rules = (0..10_001)
+        .map(|_| rule(None, None, None, "repo.read"))
+        .collect::<String>();
+    let input = set("Too many rules", "acme.com", &rules);
+    assert!(matches!(
+        load(&[&input]).await,
+        Err(LoadError::TooManyRules { limit: 10_000 })
     ));
 }
 

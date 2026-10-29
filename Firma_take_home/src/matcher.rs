@@ -129,22 +129,19 @@ impl CompiledRule {
 pub(crate) fn find_conflict(
     rules: &[CompiledRule],
 ) -> Result<Option<(usize, usize)>, ConflictCheckError> {
-    let mut checked_pairs = 0;
+    let mut remaining_glob_overlap_states = MAX_TOTAL_GLOB_OVERLAP_STATES;
     for (right_index, right) in rules.iter().enumerate() {
         for (left_index, left) in rules[..right_index].iter().enumerate() {
-            checked_pairs += 1;
-            if checked_pairs > MAX_CONFLICT_PAIR_CHECKS {
-                return Err(ConflictCheckError::TooComplex {
-                    first: left_index,
-                    second: right_index,
-                });
-            }
             if left.action_class != right.action_class
                 && left.specificity == right.specificity
                 && methods_overlap(left.method.as_deref(), right.method.as_deref())
                 && hosts_overlap(&left.host, &right.host)
             {
-                match paths_overlap(left.path.as_deref(), right.path.as_deref()) {
+                match paths_overlap(
+                    left.path.as_deref(),
+                    right.path.as_deref(),
+                    &mut remaining_glob_overlap_states,
+                ) {
                     Ok(true) => return Ok(Some((left_index, right_index))),
                     Ok(false) => {}
                     Err(()) => {
@@ -215,10 +212,20 @@ fn hosts_overlap(left: &HostPattern, right: &HostPattern) -> bool {
     }
 }
 
-fn paths_overlap(left: Option<&str>, right: Option<&str>) -> Result<bool, ()> {
+fn paths_overlap(
+    left: Option<&str>,
+    right: Option<&str>,
+    remaining_states: &mut usize,
+) -> Result<bool, ()> {
+    // Equal patterns always overlap. More importantly, this check must happen
+    // before spending the bounded wildcard-analysis budget: an identical pair
+    // is an unambiguous conflict, not an analysis failure.
+    if left == right {
+        return Ok(true);
+    }
     match (left, right) {
         (None, _) | (_, None) => Ok(true),
-        (Some(left), Some(right)) => globs_overlap(left, right),
+        (Some(left), Some(right)) => globs_overlap(left, right, remaining_states),
     }
 }
 
@@ -251,18 +258,20 @@ pub(crate) fn glob_matches(pattern: &str, value: &str) -> bool {
 
 /// Product traversal of two `*` glob NFAs. The sentinel represents any byte
 /// not currently present as a literal and keeps the alphabet finite.
-const MAX_GLOB_OVERLAP_STATES: usize = 1_000_000;
-const MAX_CONFLICT_PAIR_CHECKS: usize = 100_000;
+const MAX_TOTAL_GLOB_OVERLAP_STATES: usize = 4_000_000;
 
-fn globs_overlap(left: &str, right: &str) -> Result<bool, ()> {
+fn globs_overlap(left: &str, right: &str, remaining_states: &mut usize) -> Result<bool, ()> {
     let (left, right) = (left.as_bytes(), right.as_bytes());
     let width = right.len().checked_add(1).ok_or(())?;
     let states = left
         .len()
         .checked_add(1)
         .and_then(|height| height.checked_mul(width))
-        .filter(|states| *states <= MAX_GLOB_OVERLAP_STATES)
         .ok_or(())?;
+    if states > *remaining_states {
+        return Err(());
+    }
+    *remaining_states -= states;
     let mut seen = vec![false; states];
     let mut queue = std::collections::VecDeque::from([(0usize, 0usize)]);
     while let Some((i, j)) = queue.pop_front() {
@@ -364,25 +373,29 @@ mod tests {
     }
 
     #[test]
-    fn rejects_overlap_checks_that_exceed_the_state_limit() {
+    fn identical_complex_patterns_conflict_before_spending_budget() {
         let pattern = format!("/{}", "*".repeat(1_000));
         let rules = vec![
             rule(Some("api"), None, Some(&pattern), "payment.read"),
             rule(Some("api"), None, Some(&pattern), "payment.refund"),
         ];
-        assert!(matches!(
-            find_conflict(&rules),
-            Err(ConflictCheckError::TooComplex {
-                first: 0,
-                second: 1
-            })
-        ));
+        assert_eq!(find_conflict(&rules).unwrap(), Some((0, 1)));
     }
 
     #[test]
-    fn rejects_configurations_that_exceed_the_pair_check_limit() {
-        let rules = (0..448)
-            .map(|_| rule(Some("api"), None, None, "payment.read"))
+    fn rejects_configurations_that_exceed_total_overlap_budget() {
+        let rules = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
+            .iter()
+            .enumerate()
+            .map(|(index, byte)| {
+                let path = format!("/{}{}", "*".repeat(1_022), char::from(*byte));
+                let class = if index % 2 == 0 {
+                    "payment.read"
+                } else {
+                    "payment.refund"
+                };
+                rule(Some("api"), None, Some(&path), class)
+            })
             .collect::<Vec<_>>();
         assert!(matches!(
             find_conflict(&rules),

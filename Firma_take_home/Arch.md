@@ -584,6 +584,13 @@ The configuration loader should call these primitives rather than implement its 
 
 A conservative conflict detector must not silently accept an unresolved ambiguity. If exact overlap checking is not implemented for a supported pattern type, either restrict that pattern type during validation or reject potentially conflicting patterns with an explicit error.
 
+Wildcard overlap analysis has one 4,000,000-state budget for the complete
+load, rather than a pair-count limit. Only pairs with different action
+classes, equal specificity, and overlapping methods and hosts consume that
+budget. Equal patterns (including two omitted paths) are recognized as
+conflicts before budgeted analysis. This keeps unrelated or same-class rules
+cheap while failing closed when a configuration would require excessive work.
+
 Avoid silently selecting the first encountered rule.
 
 ### 14. Structured error handling
@@ -605,6 +612,11 @@ Suggested categories:
 - Empty rule set.
 - Conflicting rules.
 - Unsupported or ambiguous configuration.
+
+The implemented `LoadError` wraps a set-local `SetError` for TOML and
+validation failures, and otherwise reports `ConflictingRules`,
+`ConflictAnalysisTooComplex`, or `TooManyRules`. The latter two make resource
+limits explicit rather than treating them as an arbitrary conflict.
 
 Every error should identify the relevant mapping set by input index and, when available, its declared name.
 
@@ -664,6 +676,12 @@ Requirements:
 - Compile path wildcard representations during loading.
 - Keep classification deterministic under concurrent requests.
 - Avoid unnecessary allocations where practical.
+
+Configuration limits are deliberate: a normalized path pattern is at most
+1,024 bytes, a load accepts at most 10,000 rules, and wildcard conflict
+analysis spends at most 4,000,000 product-NFA states across the entire load.
+The limits bound configuration-controlled memory and CPU use while preserving
+the linear runtime scan.
 
 The public functions remain asynchronous because the starter API requires it, but internal parsing and matching do not require asynchronous tasks.
 
