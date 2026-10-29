@@ -67,7 +67,7 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
         }
         if let Some(subdomain) = &rule.subdomain
             && subdomain != "*"
-            && (!is_dns_label(subdomain) || normalize::host(subdomain).is_none())
+            && (!is_dns_name(subdomain) || normalize::host(subdomain).is_none())
         {
             return Err(SetError::InvalidRule {
                 rule: index,
@@ -274,20 +274,22 @@ rules = []
             assert!(parse(&input).is_err(), "host {host:?}");
         }
 
-        for subdomain in [
-            "-api",
-            "api-",
-            "api..internal",
-            "api.eu",
-            "api_internal",
-            "api:443",
-        ] {
+        for subdomain in ["-api", "api-", "api..internal", "api_internal", "api:443"] {
             let input = VALID.replace(
                 "action_class = \"payment.read\"",
                 &format!("subdomain = \"{subdomain}\"\naction_class = \"payment.read\""),
             );
             assert!(parse(&input).is_err(), "subdomain {subdomain:?}");
         }
+    }
+
+    #[test]
+    fn accepts_a_multi_label_exact_subdomain() {
+        let input = VALID.replace(
+            "action_class = \"payment.read\"",
+            "subdomain = \"api.eu\"\naction_class = \"payment.read\"",
+        );
+        assert!(parse(&input).is_ok());
     }
 
     #[test]
