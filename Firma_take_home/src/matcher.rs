@@ -22,7 +22,8 @@ pub(crate) struct CompiledRule {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Specificity {
-    host: u8,
+    host_kind: u8,
+    host_labels: usize,
     path_kind: u8,
     literal_count: usize,
     inverted_wildcard_count: usize,
@@ -33,7 +34,8 @@ struct Specificity {
 impl Ord for Specificity {
     fn cmp(&self, other: &Self) -> Ordering {
         (
-            self.host,
+            self.host_kind,
+            self.host_labels,
             self.path_kind,
             self.literal_count,
             self.inverted_wildcard_count,
@@ -41,7 +43,8 @@ impl Ord for Specificity {
             self.method,
         )
             .cmp(&(
-                other.host,
+                other.host_kind,
+                other.host_labels,
                 other.path_kind,
                 other.literal_count,
                 other.inverted_wildcard_count,
@@ -158,7 +161,12 @@ pub(crate) fn find_conflict(
 }
 
 fn specificity(host: &HostPattern, has_method: bool, path: Option<&str>) -> Specificity {
-    let host = u8::from(!matches!(host, HostPattern::AnySubdomain(_)));
+    let host_kind = u8::from(!matches!(host, HostPattern::AnySubdomain(_)));
+    let host_labels = match host {
+        HostPattern::Bare(value) | HostPattern::Exact(value) | HostPattern::AnySubdomain(value) => {
+            value.split('.').count()
+        }
+    };
     let (path_kind, literal_count, wildcard_count, literal_prefix) = match path {
         None => (0, 0, 0, 0),
         Some(value) if !value.contains('*') => (2, value.len(), 0, value.len()),
@@ -170,7 +178,8 @@ fn specificity(host: &HostPattern, has_method: bool, path: Option<&str>) -> Spec
         ),
     };
     Specificity {
-        host,
+        host_kind,
+        host_labels,
         path_kind,
         literal_count,
         inverted_wildcard_count: usize::MAX - wildcard_count,

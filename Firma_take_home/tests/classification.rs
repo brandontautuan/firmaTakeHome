@@ -154,3 +154,34 @@ fn concurrent_classification_is_consistent() {
         }
     });
 }
+
+#[tokio::test]
+async fn deeper_wildcard_base_host_wins_before_path_specificity() {
+    let broad = r#"
+format_version = 1
+name = "Broad"
+host = "co.uk"
+
+[[rules]]
+subdomain = "*"
+path = "/v1/*"
+action_class = "llm.inference"
+"#;
+    let stripe = r#"
+format_version = 1
+name = "Stripe"
+host = "stripe.co.uk"
+
+[[rules]]
+subdomain = "*"
+path = "/v1/*"
+action_class = "payment.read"
+"#;
+    let classifier = load(&[broad, stripe]).await.unwrap();
+    assert_eq!(
+        classifier
+            .classify("POST", "api.stripe.co.uk", "/v1/refunds/x")
+            .await,
+        Some("payment.read")
+    );
+}

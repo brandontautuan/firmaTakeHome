@@ -329,6 +329,8 @@ Use an explicit ASCII DNS hostname contract.
 - Preserve DNS label boundaries.
 
 Configuration `host` should represent the bare domain.
+It must contain at least two DNS labels; single-label public suffix-like bases
+such as `com` are too broad for a wildcard rule.
 
 Subdomain values must be either `*` or one or more valid DNS labels. Per the README, the rule host is the subdomain followed by `host`, so `subdomain = "api.eu"` with `host = "acme.com"` names `api.eu.acme.com`.
 
@@ -491,7 +493,7 @@ Use a deterministic lexicographic ordering.
 
 The order is:
 
-1. Host specificity.
+1. Host specificity (host kind, then base-host label depth).
 2. Path specificity.
 3. Method specificity.
 
@@ -499,6 +501,8 @@ Host specificity:
 
 - Exact subdomain takes priority over wildcard subdomain.
 - Bare-host rules match only the bare host.
+- Among host matchers of the same kind, the rule with the deeper base host
+  takes priority before any path or method comparison.
 
 Path specificity:
 

@@ -110,6 +110,7 @@ fn validate_host(host: &str) -> Result<(), SetError> {
         && !host.ends_with('.')
         && normalize::host(host).is_some()
         && is_dns_name(host)
+        && host.split('.').count() >= 2
     {
         Ok(())
     } else {
@@ -272,6 +273,7 @@ rules = []
     #[test]
     fn rejects_malformed_hostnames_and_subdomains() {
         for host in [
+            "com",
             "-acme.com",
             "acme-.com",
             "acme..com",
