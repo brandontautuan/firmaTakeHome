@@ -123,7 +123,7 @@ async fn excessively_complex_wildcard_overlap_is_rejected() {
 
 #[tokio::test]
 async fn same_class_duplicates_are_harmless() {
-    let a = set("A", "acme.com", &rule(None, None, Some("/x"), "repo.read"));
+    let a = set("A", "acme.com", &rule(None, None, Some("/x*"), "repo.read"));
     let c = load(&[&a, &a]).await.unwrap();
     assert_eq!(c.classify("GET", "acme.com", "/x").await, Some("repo.read"));
 }

@@ -174,7 +174,10 @@ impl Classifier {
             None if path != "/" => format!("{path}/"),
             None => return class,
         };
-        if self.best_match(&method, &host, &alternate_path) != class {
+        if let (Some(class), Some(alternative)) =
+            (class, self.best_match(&method, &host, &alternate_path))
+            && alternative != class
+        {
             return None;
         }
         class
