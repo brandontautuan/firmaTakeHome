@@ -86,11 +86,10 @@ fn normalize_path(input: &str, pattern: bool) -> Option<String> {
         return None;
     }
 
-    // A dot segment next to a wildcard cannot be canonicalized soundly: the
-    // wildcard can span an unknown number of path segments. Reject rather than
-    // assigning it a meaning that a URL client or server may not share.
+    // Configuration must describe its path literally. Silently rewriting a
+    // configured dot segment would make its displayed value disagree with the
+    // route the matcher actually evaluates.
     if pattern
-        && decoded.contains('*')
         && decoded
             .split('/')
             .any(|segment| segment == "." || segment == "..")
@@ -281,6 +280,8 @@ mod tests {
             Some("/v1/refunds/*".into())
         );
         assert_eq!(pattern_path("/v1/*/../admin"), None);
+        assert_eq!(pattern_path("/v1/../admin"), None);
+        assert_eq!(pattern_path("/v1/./admin"), None);
         assert_eq!(pattern_path("/v1/*?debug=true"), None);
         assert_eq!(pattern_path("/v1//x"), None);
         assert_eq!(pattern_path("/v1/refunds;v=1"), None);

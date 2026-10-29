@@ -339,6 +339,7 @@ Subdomain values must be either `*` or one or more valid DNS labels. Per the REA
 - Reject invalid token characters.
 - Reject whitespace.
 - Reject empty strings.
+- Reject `method = "*"`; omitting `method` is the only spelling for any valid method.
 - Fold method tokens to uppercase in both rules and requests. Methods are case-sensitive on the wire, but Fetch and Node upper-case common methods and some servers fold case; without folding, `delete` would skip a `DELETE` rule and reach a broader method-less one.
 - A missing method means any valid method.
 
@@ -353,6 +354,7 @@ Subdomain values must be either `*` or one or more valid DNS labels. Per the REA
 - Reject empty segments (`//`), backslashes, literal semicolons, and non-graphic bytes. Semicolons can be stripped as path parameters by upstream servers, so accepting them could classify a different operation.
 - Reject query strings and fragments in patterns.
 - Reject patterns that cannot be represented safely by the matcher.
+- Reject configured `.` and `..` segments instead of silently rewriting them.
 
 ### 8. Internal compiled representation
 

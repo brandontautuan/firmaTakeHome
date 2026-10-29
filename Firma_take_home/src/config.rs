@@ -60,7 +60,7 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
             });
         }
         if let Some(method) = &rule.method
-            && normalize::method(method).is_none()
+            && (method == "*" || normalize::method(method).is_none())
         {
             return Err(SetError::InvalidRule {
                 rule: index,
@@ -250,6 +250,13 @@ rules = []
         assert!(
             parse(&VALID.replace(
                 "action_class = \"payment.read\"",
+                "method = \"*\"\naction_class = \"payment.read\""
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&VALID.replace(
+                "action_class = \"payment.read\"",
                 "subdomain = \"api..internal\"\naction_class = \"payment.read\""
             ))
             .is_err()
@@ -265,6 +272,13 @@ rules = []
             parse(&VALID.replace(
                 "action_class = \"payment.read\"",
                 "path = \"/v1/%2fadmin\"\naction_class = \"payment.read\""
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&VALID.replace(
+                "action_class = \"payment.read\"",
+                "path = \"/v1/../admin\"\naction_class = \"payment.read\""
             ))
             .is_err()
         );
