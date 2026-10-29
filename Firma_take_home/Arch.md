@@ -764,6 +764,8 @@ Use property-based testing or fuzz-style generated inputs to confirm:
 - Malformed input does not unexpectedly map to a valid action class.
 - Concurrent classification does not mutate shared state.
 
+Generated request coverage must include valid matching requests as well as malformed input, and assert that a meaningful portion reaches an action class.
+
 Maintain all four existing example tests.
 
 ### 18. Multi-agent development plan
