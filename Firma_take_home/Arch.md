@@ -400,7 +400,7 @@ The precise types may change based on the matcher implementation, but parsing an
 
 `Specificity` should be a structured value with an explicitly defined ordering.
 
-Since the action classes are a fixed constant list, compiled rules may reference the corresponding static string rather than repeatedly allocating identical class values.
+Since the action classes are a fixed constant list, compiled rules retain the corresponding `ACTION_CLASSES` static string, so an unknown class cannot be returned at runtime.
 
 Preserve mapping-set index, mapping name, and rule index during loading so errors can identify their sources.
 

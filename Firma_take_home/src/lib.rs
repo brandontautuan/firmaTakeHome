@@ -119,17 +119,30 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
                 rule.path.as_deref(),
                 rule.action_class,
             )
-            .map_err(|error| LoadError::InvalidSet {
-                set: set_index,
-                name: Some(set.name.clone()),
-                error: SetError::InvalidRule {
-                    rule: rule_index,
-                    field: match error {
-                        CompileError::Host => "subdomain",
-                        CompileError::Method => "method",
-                        CompileError::Path => "path",
+            .map_err(|error| {
+                let error = match error {
+                    CompileError::Host => SetError::InvalidRule {
+                        rule: rule_index,
+                        field: "subdomain",
                     },
-                },
+                    CompileError::Method => SetError::InvalidRule {
+                        rule: rule_index,
+                        field: "method",
+                    },
+                    CompileError::Path => SetError::InvalidRule {
+                        rule: rule_index,
+                        field: "path",
+                    },
+                    CompileError::ActionClass(action_class) => SetError::UnknownActionClass {
+                        rule: rule_index,
+                        action_class,
+                    },
+                };
+                LoadError::InvalidSet {
+                    set: set_index,
+                    name: Some(set.name.clone()),
+                    error,
+                }
             })?;
             rules.push(compiled);
             locations.push(RuleLocation {
@@ -183,6 +196,6 @@ impl Classifier {
             .iter()
             .filter(|rule| rule.matches(method, host, path))
             .max_by(|left, right| left.compare_specificity(right))
-            .map(|rule| rule.action_class.as_str())
+            .map(|rule| rule.action_class)
     }
 }

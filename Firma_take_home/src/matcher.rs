@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use crate::normalize;
+use crate::{ACTION_CLASSES, normalize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HostPattern {
@@ -16,7 +16,7 @@ pub(crate) struct CompiledRule {
     pub(crate) method: Option<String>,
     pub(crate) host: HostPattern,
     pub(crate) path: Option<String>,
-    pub(crate) action_class: String,
+    pub(crate) action_class: &'static str,
     specificity: Specificity,
 }
 
@@ -62,6 +62,7 @@ pub(crate) enum CompileError {
     Host,
     Method,
     Path,
+    ActionClass(String),
 }
 
 #[derive(Debug)]
@@ -94,6 +95,11 @@ impl CompiledRule {
             Some(value) => Some(normalize::pattern_path(value).ok_or(CompileError::Path)?),
             None => None,
         };
+        let action_class = ACTION_CLASSES
+            .iter()
+            .copied()
+            .find(|known| *known == action_class)
+            .ok_or(CompileError::ActionClass(action_class))?;
         let specificity = specificity(&host, method.is_some(), path.as_deref());
         Ok(Self {
             method,
@@ -302,7 +308,7 @@ fn transition(pattern: &[u8], index: usize, byte: u8) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompiledRule, ConflictCheckError, find_conflict, glob_matches};
+    use super::{CompileError, CompiledRule, ConflictCheckError, find_conflict, glob_matches};
 
     fn rule(
         subdomain: Option<&str>,
@@ -395,5 +401,13 @@ mod tests {
         assert!(!get.matches("POST", "api.acme.com", "/v1/x"));
         let lower = rule(Some("api"), Some("get"), Some("/v1/*"), "payment.create");
         assert_eq!(lower.method.as_deref(), Some("GET"));
+    }
+
+    #[test]
+    fn compiled_rules_only_retain_known_action_classes() {
+        assert!(matches!(
+            CompiledRule::new(None, "acme.com", None, None, "unknown.class".into()),
+            Err(CompileError::ActionClass(_))
+        ));
     }
 }
