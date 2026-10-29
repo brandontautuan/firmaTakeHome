@@ -247,6 +247,9 @@ fn paths_overlap(
     }
     match (left, right) {
         (None, _) | (_, None) => Ok(true),
+        (Some(left), Some(right)) if !left.contains('*') && !right.contains('*') => Ok(false),
+        (Some(left), Some(right)) if !left.contains('*') => Ok(glob_matches(right, left)),
+        (Some(left), Some(right)) if !right.contains('*') => Ok(glob_matches(left, right)),
         (Some(left), Some(right)) => globs_overlap(left, right, remaining_states),
     }
 }

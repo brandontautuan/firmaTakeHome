@@ -610,6 +610,8 @@ classes, equal specificity, and overlapping methods and hosts consume that
 budget. Equal patterns (including two omitted paths) are recognized as
 conflicts before budgeted analysis. This keeps unrelated or same-class rules
 cheap while failing closed when a configuration would require excessive work.
+Pairs containing an exact path are resolved directly against that literal;
+only two wildcard patterns consume product-NFA budget.
 
 Avoid silently selecting the first encountered rule.
 

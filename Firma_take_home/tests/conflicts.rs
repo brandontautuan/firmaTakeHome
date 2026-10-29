@@ -146,6 +146,26 @@ async fn same_class_rules_do_not_consume_overlap_budget() {
 }
 
 #[tokio::test]
+async fn distinct_exact_paths_do_not_consume_wildcard_overlap_budget() {
+    let rules = (0..1_000)
+        .map(|index| {
+            rule(
+                None,
+                None,
+                Some(&format!("/path-{index:04}")),
+                if index % 2 == 0 {
+                    "repo.read"
+                } else {
+                    "repo.write"
+                },
+            )
+        })
+        .collect::<String>();
+    let input = set("Exact paths", "acme.com", &rules);
+    assert!(load(&[&input]).await.is_ok());
+}
+
+#[tokio::test]
 async fn adversarial_wildcard_pairs_exhaust_total_overlap_budget() {
     let rules = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
         .iter()
