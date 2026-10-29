@@ -348,7 +348,7 @@ Subdomain values must be either `*` or one or more valid DNS labels. Per the REA
 - Reject encoded separators that create ambiguous path interpretations.
 - Apply the same canonicalization contract to configuration literals and request paths.
 - Decode only escaped unreserved characters (`A-Z a-z 0-9 - . _ ~`) and upper-case remaining escapes (RFC 3986 section 6.2.2). Decode once; `%25` stays `%25`.
-- Reject empty segments (`//`), backslashes, and non-graphic bytes.
+- Reject empty segments (`//`), backslashes, literal semicolons, and non-graphic bytes. Semicolons can be stripped as path parameters by upstream servers, so accepting them could classify a different operation.
 - Reject query strings and fragments in patterns.
 - Reject patterns that cannot be represented safely by the matcher.
 
@@ -435,6 +435,7 @@ Normalize incoming request metadata before matching.
 - Remove query strings and fragments before matching.
 - Require a leading `/` for nonempty paths.
 - Reject duplicate slashes (empty segments): servers disagree on whether `//` collapses.
+- Reject literal semicolons: Tomcat, Jetty, and Spring-style servers may strip path parameters before routing.
 - Keep trailing slashes. When a request path ends in `/`, also compare the slash-stripped spelling; if it classifies to a different action, return `None`. This protects against servers that strip a sent trailing slash while preserving the classification of a request sent without one.
 - Decode escaped unreserved characters, so `%72efunds` matches `refunds` and `%2e%2e` is a dot segment.
 - Normalize dot segments.

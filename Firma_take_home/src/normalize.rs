@@ -72,7 +72,7 @@ fn normalize_path(input: &str, pattern: bool) -> Option<String> {
         return None;
     }
     let decoded = decode_unreserved(input)?;
-    if decoded.contains("//") {
+    if decoded.contains("//") || decoded.contains(';') {
         return None;
     }
 
@@ -241,6 +241,7 @@ mod tests {
         assert_eq!(request_path("/v1/payments/"), Some("/v1/payments/".into()));
         for value in [
             "relative", "/x%ZZ", "/x%2f", "/x%5C", "/x\\y", "/é", "/a b", "/a\0", "/v1//x", "//",
+            "/x;y",
         ] {
             assert_eq!(request_path(value), None, "{value:?}");
         }
@@ -251,6 +252,7 @@ mod tests {
         assert_eq!(request_path("/v1/%72efunds"), Some("/v1/refunds".into()));
         assert_eq!(request_path("/%7Euser/%5f"), Some("/~user/_".into()));
         assert_eq!(request_path("/a%3a%2A"), Some("/a%3A%2A".into()));
+        assert_eq!(request_path("/a%3Bb"), Some("/a%3Bb".into()));
         // No double decoding: `%252e` is a literal `%2e`, not a dot segment.
         assert_eq!(
             request_path("/a/%252e%252e/b"),
@@ -271,6 +273,7 @@ mod tests {
         assert_eq!(pattern_path("/v1/*/../admin"), None);
         assert_eq!(pattern_path("/v1/*?debug=true"), None);
         assert_eq!(pattern_path("/v1//x"), None);
+        assert_eq!(pattern_path("/v1/refunds;v=1"), None);
     }
 
     #[test]

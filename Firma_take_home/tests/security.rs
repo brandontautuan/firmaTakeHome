@@ -127,6 +127,21 @@ async fn ambiguous_or_malformed_paths_are_unclassified() {
 }
 
 #[tokio::test]
+async fn path_parameters_are_unclassified() {
+    let c = load(&[ACME]).await.unwrap();
+    for path in ["/v1/refunds;x/re_1", "/v1/refunds;/re_1"] {
+        assert_eq!(
+            c.classify("POST", "api.acme.com", path).await,
+            None,
+            "{path:?}"
+        );
+    }
+
+    let invalid_pattern = ACME.replace("path = \"/v1/payouts\"", "path = \"/v1/payouts;v=1\"");
+    assert!(load(&[&invalid_pattern]).await.is_err());
+}
+
+#[tokio::test]
 async fn empty_rules_list_is_rejected() {
     let empty = r#"
 format_version = 1
