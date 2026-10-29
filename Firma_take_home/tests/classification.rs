@@ -79,9 +79,7 @@ async fn most_specific_rule_wins() {
         ("POST", "/v1/x", Some("payment.create")),
         // More literal characters beat a method on a broader pattern.
         ("POST", "/v1/refunds/r1", Some("payment.refund")),
-        // The slash-appended form falls back to `/v1/*`, so both spellings
-        // are conservatively unclassified.
-        ("GET", "/v1/msg/send", None),
+        ("GET", "/v1/msg/send", Some("communication.external.send")),
         // A path no exact-host rule covers falls back to the wildcard host.
         ("GET", "/v2/x", Some("repo.read")),
     ];

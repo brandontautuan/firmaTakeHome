@@ -434,7 +434,7 @@ Normalize incoming request metadata before matching.
 - Remove query strings and fragments before matching.
 - Require a leading `/` for nonempty paths.
 - Reject duplicate slashes (empty segments): servers disagree on whether `//` collapses.
-- Keep trailing slashes, but if `/x/` and `/x` classify differently, return `None`: many servers route both to one handler, so the action is ambiguous.
+- Keep trailing slashes. When a request path ends in `/`, also compare the slash-stripped spelling; if it classifies to a different action, return `None`. This protects against servers that strip a sent trailing slash while preserving the classification of a request sent without one.
 - Decode escaped unreserved characters, so `%72efunds` matches `refunds` and `%2e%2e` is a dot segment.
 - Normalize dot segments.
 - Reject malformed percent encoding.

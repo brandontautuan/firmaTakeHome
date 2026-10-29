@@ -166,19 +166,14 @@ impl Classifier {
         let path = normalize::request_path(path)?;
         let class = self.best_match(&method, &host, &path);
 
-        // Many servers route `/x/` and `/x` to the same handler. If the two
-        // spellings classify differently we cannot know which action runs, so
-        // the request is left unclassified (and therefore denied).
-        let alternate_path = match path.strip_suffix('/').filter(|rest| !rest.is_empty()) {
-            Some(stripped) => stripped.to_owned(),
-            None if path != "/" => format!("{path}/"),
-            None => return class,
-        };
-        if let (Some(class), Some(alternative)) =
-            (class, self.best_match(&method, &host, &alternate_path))
-            && alternative != class
-        {
-            return None;
+        // A server may strip a trailing slash and route to a more sensitive
+        // handler. A request sent without one is classified as sent, so only
+        // the trailing-slash spelling needs this conservative comparison.
+        if let Some(stripped) = path.strip_suffix('/').filter(|rest| !rest.is_empty()) {
+            let alternative = self.best_match(&method, &host, stripped);
+            if alternative.is_some() && alternative != class {
+                return None;
+            }
         }
         class
     }
