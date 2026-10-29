@@ -194,13 +194,17 @@ impl Classifier {
         let host = normalize::host(host)?;
         let path = normalize::request_path(path)?;
         let class = self.best_match(&method, &host, &path);
-
-        // A server may strip a trailing slash and route to a more sensitive
-        // handler. A request sent without one is classified as sent, so only
-        // the trailing-slash spelling needs this conservative comparison.
+        let lowercase = normalize::lowercase_path_outside_escapes(&path);
+        let mut alternatives = vec![lowercase.as_str()];
         if let Some(stripped) = path.strip_suffix('/').filter(|rest| !rest.is_empty()) {
-            let alternative = self.best_match(&method, &host, stripped);
-            if alternative.is_some() && alternative != class {
+            alternatives.push(stripped);
+        }
+        if let Some(stripped) = lowercase.strip_suffix('/').filter(|rest| !rest.is_empty()) {
+            alternatives.push(stripped);
+        }
+        for alternative in alternatives {
+            let alternative_class = self.best_match(&method, &host, alternative);
+            if alternative_class.is_some() && alternative_class != class {
                 return None;
             }
         }

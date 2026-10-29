@@ -446,6 +446,7 @@ Normalize incoming request metadata before matching.
 - Reject duplicate slashes (empty segments): servers disagree on whether `//` collapses.
 - Reject literal semicolons: Tomcat, Jetty, and Spring-style servers may strip path parameters before routing.
 - Keep trailing slashes. When a request path ends in `/`, also compare the slash-stripped spelling; if it classifies to a different action, return `None`. This protects against servers that strip a sent trailing slash while preserving the classification of a request sent without one.
+- Also compare an ASCII-lowercased spelling outside percent escapes, plus its slash-stripped spelling when applicable. If any such spelling has a different nonempty classification, return `None`. This detects disagreement with common case-insensitive routers while retaining the original case-sensitive match when no alternate rule applies; it only detects the conventional lowercase rule spelling.
 - Decode escaped unreserved characters, so `%72efunds` matches `refunds` and `%2e%2e` is a dot segment.
 - Normalize dot segments.
 - Reject malformed percent encoding.
@@ -456,6 +457,13 @@ Normalize incoming request metadata before matching.
 Document the normalization contract clearly.
 
 HTTP clients and upstream servers may interpret some paths differently. The classifier cannot guarantee semantic equivalence across every upstream service using only method, host, and path. Prefer conservative rejection when interpretation is uncertain.
+
+#### Known limits
+
+- Some servers trim trailing dots or `%20` at the end of a segment.
+- Method-override headers such as `X-HTTP-Method-Override` are not visible to this API.
+- A server that decodes a path twice can interpret `%252e` differently.
+- Request bodies and provider-specific routing data are outside this metadata-only classifier.
 
 ### 10. Rule matching
 

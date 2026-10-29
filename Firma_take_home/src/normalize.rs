@@ -73,6 +73,27 @@ pub(crate) fn pattern_path(input: &str) -> Option<String> {
     normalize_path(input, true)
 }
 
+/// Lowercases ASCII letters in a normalized path without changing percent
+/// escapes. This is used only to detect disagreement with common
+/// case-insensitive server routers; it never changes the path being matched.
+pub(crate) fn lowercase_path_outside_escapes(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut output = String::with_capacity(path.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            output.push('%');
+            output.push(char::from(bytes[index + 1]));
+            output.push(char::from(bytes[index + 2]));
+            index += 3;
+        } else {
+            output.push(char::from(bytes[index].to_ascii_lowercase()));
+            index += 1;
+        }
+    }
+    output
+}
+
 /// Canonical form shared by requests and patterns: unreserved percent escapes
 /// decoded, other escapes upper-cased, and dot segments removed. Empty path
 /// segments, backslashes, and encoded separators are rejected because servers
@@ -206,7 +227,7 @@ fn is_http_token(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{host, method, pattern_path, request_path};
+    use super::{host, lowercase_path_outside_escapes, method, pattern_path, request_path};
 
     #[test]
     fn normalizes_hosts_and_rejects_ambiguous_authorities() {
@@ -266,6 +287,14 @@ mod tests {
         assert_eq!(
             request_path("/a/%252e%252e/b"),
             Some("/a/%252e%252e/b".into())
+        );
+    }
+
+    #[test]
+    fn lowercases_paths_without_touching_percent_escapes() {
+        assert_eq!(
+            lowercase_path_outside_escapes("/V1/%3ARefunds"),
+            "/v1/%3Arefunds"
         );
     }
 

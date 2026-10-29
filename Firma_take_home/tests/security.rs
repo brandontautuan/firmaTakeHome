@@ -142,6 +142,36 @@ async fn path_parameters_are_unclassified() {
 }
 
 #[tokio::test]
+async fn case_insensitive_routing_disagreements_are_unclassified() {
+    let c = load(&[ACME]).await.unwrap();
+    assert_eq!(
+        c.classify("POST", "api.acme.com", "/v1/REFUNDS/re_1").await,
+        None
+    );
+    // Check combinations of case and trailing-slash ambiguity too.
+    assert_eq!(
+        c.classify("POST", "api.acme.com", "/v1/PAYOUTS/").await,
+        None
+    );
+
+    let uppercase_id_route = r#"
+format_version = 1
+name = "Case sensitive IDs"
+host = "acme.com"
+
+[[rules]]
+subdomain = "api"
+path = "/v1/IDs/*"
+action_class = "repo.read"
+"#;
+    let c = load(&[uppercase_id_route]).await.unwrap();
+    assert_eq!(
+        c.classify("GET", "api.acme.com", "/v1/IDs/AbC").await,
+        Some("repo.read")
+    );
+}
+
+#[tokio::test]
 async fn empty_rules_list_is_rejected() {
     let empty = r#"
 format_version = 1
