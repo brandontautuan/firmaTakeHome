@@ -67,7 +67,7 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
         }
         if let Some(subdomain) = &rule.subdomain
             && subdomain != "*"
-            && (!is_dns_name(subdomain) || normalize::host(subdomain).is_none())
+            && (!is_dns_label(subdomain) || normalize::host(subdomain).is_none())
         {
             return Err(SetError::InvalidRule {
                 rule: index,
@@ -110,17 +110,17 @@ fn validate_host(host: &str) -> Result<(), SetError> {
 }
 
 fn is_dns_name(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 253 && value.split('.').all(is_dns_label)
+}
+
+fn is_dns_label(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 253
-        && value.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
+        && value.len() <= 63
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 #[cfg(test)]
@@ -274,7 +274,14 @@ rules = []
             assert!(parse(&input).is_err(), "host {host:?}");
         }
 
-        for subdomain in ["-api", "api-", "api..internal", "api_internal", "api:443"] {
+        for subdomain in [
+            "-api",
+            "api-",
+            "api..internal",
+            "api.eu",
+            "api_internal",
+            "api:443",
+        ] {
             let input = VALID.replace(
                 "action_class = \"payment.read\"",
                 &format!("subdomain = \"{subdomain}\"\naction_class = \"payment.read\""),

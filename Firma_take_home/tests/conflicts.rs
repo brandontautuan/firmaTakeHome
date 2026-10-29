@@ -146,18 +146,18 @@ async fn rules_for_different_hosts_never_conflict() {
 }
 
 #[tokio::test]
-async fn dotted_subdomain_and_deeper_base_host_name_the_same_host() {
-    // README: the rule's host is `subdomain` followed by `host`, so these two
-    // rules describe the same origin and must be checked against each other.
+async fn exact_subdomain_and_bare_rule_on_the_same_host_conflict() {
+    // Exact subdomains are one DNS label. These rules still name the same
+    // origin and must be checked against each other.
     let a = set(
         "A",
-        "acme.com",
-        &rule(Some("api.eu"), None, None, "repo.read"),
+        "eu.acme.com",
+        &rule(Some("api"), None, None, "repo.read"),
     );
     let b = set(
         "B",
-        "eu.acme.com",
-        &rule(Some("api"), None, None, "repo.write"),
+        "api.eu.acme.com",
+        &rule(None, None, None, "repo.write"),
     );
     assert!(matches!(
         load(&[&a, &b]).await,
