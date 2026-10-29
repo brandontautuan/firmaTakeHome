@@ -64,6 +64,11 @@ pub(crate) enum CompileError {
     Path,
 }
 
+#[derive(Debug)]
+pub(crate) enum ConflictCheckError {
+    TooComplex { first: usize, second: usize },
+}
+
 impl CompiledRule {
     pub(crate) fn new(
         method: Option<&str>,
@@ -115,20 +120,30 @@ impl CompiledRule {
     }
 }
 
-pub(crate) fn find_conflict(rules: &[CompiledRule]) -> Option<(usize, usize)> {
+pub(crate) fn find_conflict(
+    rules: &[CompiledRule],
+) -> Result<Option<(usize, usize)>, ConflictCheckError> {
     for (right_index, right) in rules.iter().enumerate() {
         for (left_index, left) in rules[..right_index].iter().enumerate() {
             if left.action_class != right.action_class
                 && left.specificity == right.specificity
                 && methods_overlap(left.method.as_deref(), right.method.as_deref())
                 && hosts_overlap(&left.host, &right.host)
-                && paths_overlap(left.path.as_deref(), right.path.as_deref())
             {
-                return Some((left_index, right_index));
+                match paths_overlap(left.path.as_deref(), right.path.as_deref()) {
+                    Ok(true) => return Ok(Some((left_index, right_index))),
+                    Ok(false) => {}
+                    Err(()) => {
+                        return Err(ConflictCheckError::TooComplex {
+                            first: left_index,
+                            second: right_index,
+                        });
+                    }
+                }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 fn specificity(host: &HostPattern, has_method: bool, path: Option<&str>) -> Specificity {
@@ -186,9 +201,9 @@ fn hosts_overlap(left: &HostPattern, right: &HostPattern) -> bool {
     }
 }
 
-fn paths_overlap(left: Option<&str>, right: Option<&str>) -> bool {
+fn paths_overlap(left: Option<&str>, right: Option<&str>) -> Result<bool, ()> {
     match (left, right) {
-        (None, _) | (_, None) => true,
+        (None, _) | (_, None) => Ok(true),
         (Some(left), Some(right)) => globs_overlap(left, right),
     }
 }
@@ -222,17 +237,27 @@ pub(crate) fn glob_matches(pattern: &str, value: &str) -> bool {
 
 /// Product traversal of two `*` glob NFAs. The sentinel represents any byte
 /// not currently present as a literal and keeps the alphabet finite.
-fn globs_overlap(left: &str, right: &str) -> bool {
+const MAX_GLOB_OVERLAP_STATES: usize = 1_000_000;
+
+fn globs_overlap(left: &str, right: &str) -> Result<bool, ()> {
     let (left, right) = (left.as_bytes(), right.as_bytes());
-    let mut seen = vec![vec![false; right.len() + 1]; left.len() + 1];
+    let width = right.len().checked_add(1).ok_or(())?;
+    let states = left
+        .len()
+        .checked_add(1)
+        .and_then(|height| height.checked_mul(width))
+        .filter(|states| *states <= MAX_GLOB_OVERLAP_STATES)
+        .ok_or(())?;
+    let mut seen = vec![false; states];
     let mut queue = std::collections::VecDeque::from([(0usize, 0usize)]);
     while let Some((i, j)) = queue.pop_front() {
-        if seen[i][j] {
+        let state = i * width + j;
+        if seen[state] {
             continue;
         }
-        seen[i][j] = true;
+        seen[state] = true;
         if i == left.len() && j == right.len() {
-            return true;
+            return Ok(true);
         }
         if left.get(i) == Some(&b'*') {
             queue.push_back((i + 1, j));
@@ -255,7 +280,7 @@ fn globs_overlap(left: &str, right: &str) -> bool {
             }
         }
     }
-    false
+    Ok(false)
 }
 
 fn transition(pattern: &[u8], index: usize, byte: u8) -> Option<usize> {
@@ -268,7 +293,7 @@ fn transition(pattern: &[u8], index: usize, byte: u8) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompiledRule, find_conflict, glob_matches};
+    use super::{CompiledRule, ConflictCheckError, find_conflict, glob_matches};
 
     fn rule(
         subdomain: Option<&str>,
@@ -315,12 +340,28 @@ mod tests {
             rule(Some("api"), None, Some("/v1/*a*bc"), "payment.read"),
             rule(Some("api"), None, Some("/v1/*ab*c"), "payment.refund"),
         ];
-        assert_eq!(find_conflict(&conflicting), Some((0, 1)));
+        assert_eq!(find_conflict(&conflicting).unwrap(), Some((0, 1)));
         let ordered = vec![
             rule(Some("api"), None, Some("/v1/*"), "payment.read"),
             rule(Some("api"), None, Some("/v1/payments"), "payment.refund"),
         ];
-        assert_eq!(find_conflict(&ordered), None);
+        assert_eq!(find_conflict(&ordered).unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_overlap_checks_that_exceed_the_state_limit() {
+        let pattern = format!("/{}", "*".repeat(1_000));
+        let rules = vec![
+            rule(Some("api"), None, Some(&pattern), "payment.read"),
+            rule(Some("api"), None, Some(&pattern), "payment.refund"),
+        ];
+        assert!(matches!(
+            find_conflict(&rules),
+            Err(ConflictCheckError::TooComplex {
+                first: 0,
+                second: 1
+            })
+        ));
     }
 
     #[test]

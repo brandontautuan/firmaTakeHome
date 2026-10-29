@@ -107,6 +107,21 @@ async fn overlapping_wildcards_with_equal_specificity_conflict() {
 }
 
 #[tokio::test]
+async fn excessively_complex_wildcard_overlap_is_rejected() {
+    let path = format!("/{}", "*".repeat(1_000));
+    let a = set("A", "acme.com", &rule(None, None, Some(&path), "repo.read"));
+    let b = set(
+        "B",
+        "acme.com",
+        &rule(None, None, Some(&path), "repo.write"),
+    );
+    assert!(matches!(
+        load(&[&a, &b]).await,
+        Err(LoadError::ConflictAnalysisTooComplex { .. })
+    ));
+}
+
+#[tokio::test]
 async fn same_class_duplicates_are_harmless() {
     let a = set("A", "acme.com", &rule(None, None, Some("/x"), "repo.read"));
     let c = load(&[&a, &a]).await.unwrap();

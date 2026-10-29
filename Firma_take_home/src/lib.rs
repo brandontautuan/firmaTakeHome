@@ -10,7 +10,7 @@ mod normalize;
 use std::fmt;
 
 use config::parse;
-use matcher::{CompileError, CompiledRule, find_conflict};
+use matcher::{CompileError, CompiledRule, ConflictCheckError, find_conflict};
 
 /// Action classes a rule may name. A rule naming anything else is invalid.
 pub const ACTION_CLASSES: &[&str] = &[
@@ -40,6 +40,14 @@ pub enum LoadError {
     /// with equal specificity but name different action classes.
     #[error("{first} and {second} overlap with equal specificity but different action classes")]
     ConflictingRules {
+        first: RuleLocation,
+        second: RuleLocation,
+    },
+    /// Two wildcard patterns require more overlap-analysis state than the
+    /// loader safely permits. Rejecting prevents configuration-driven memory
+    /// exhaustion without silently accepting an unresolved ambiguity.
+    #[error("{first} and {second} require excessive conflict analysis")]
+    ConflictAnalysisTooComplex {
         first: RuleLocation,
         second: RuleLocation,
     },
@@ -131,11 +139,20 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
             });
         }
     }
-    if let Some((first, second)) = find_conflict(&rules) {
-        return Err(LoadError::ConflictingRules {
-            first: locations[first].clone(),
-            second: locations[second].clone(),
-        });
+    match find_conflict(&rules) {
+        Ok(Some((first, second))) => {
+            return Err(LoadError::ConflictingRules {
+                first: locations[first].clone(),
+                second: locations[second].clone(),
+            });
+        }
+        Ok(None) => {}
+        Err(ConflictCheckError::TooComplex { first, second }) => {
+            return Err(LoadError::ConflictAnalysisTooComplex {
+                first: locations[first].clone(),
+                second: locations[second].clone(),
+            });
+        }
     }
     Ok(Classifier { rules })
 }
