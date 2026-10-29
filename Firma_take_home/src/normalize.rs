@@ -4,6 +4,9 @@
 //! authority and path syntax. In particular, IP literals, userinfo, encoded
 //! separators, malformed percent escapes, and non-ASCII text are rejected.
 
+const MAX_METHOD_BYTES: usize = 32;
+const MAX_REQUEST_PATH_BYTES: usize = 8 * 1024;
+
 /// Returns a lowercase DNS hostname without one optional trailing dot or port.
 pub(crate) fn host(input: &str) -> Option<String> {
     if input.is_empty() || !input.is_ascii() || input.contains('@') {
@@ -40,11 +43,18 @@ pub(crate) fn host(input: &str) -> Option<String> {
 /// them; folding prevents a lowercase spelling from bypassing a stricter
 /// uppercase rule and falling through to a broader rule.
 pub(crate) fn method(input: &str) -> Option<String> {
-    (!input.is_empty() && input.bytes().all(is_http_token)).then(|| input.to_ascii_uppercase())
+    (1..=MAX_METHOD_BYTES)
+        .contains(&input.len())
+        .then_some(())
+        .filter(|()| input.bytes().all(is_http_token))
+        .map(|()| input.to_ascii_uppercase())
 }
 
 /// Normalizes a request path. Empty input represents the origin-form `/`.
 pub(crate) fn request_path(input: &str) -> Option<String> {
+    if input.len() > MAX_REQUEST_PATH_BYTES {
+        return None;
+    }
     let end = input.find(['?', '#']).unwrap_or(input.len());
     let path = &input[..end];
     if path.is_empty() {
@@ -225,7 +235,7 @@ mod tests {
         assert_eq!(method("GET"), Some("GET".into()));
         assert_eq!(method("delete"), Some("DELETE".into()));
         assert_eq!(method("Patch"), Some("PATCH".into()));
-        for value in ["", "GET ", "GET\n", "é"] {
+        for value in ["", "GET ", "GET\n", "é", &"G".repeat(33)] {
             assert_eq!(method(value), None, "{value:?}");
         }
     }
@@ -278,7 +288,8 @@ mod tests {
 
     #[test]
     fn long_and_arbitrary_utf8_request_inputs_never_panic() {
-        assert!(request_path(&format!("/{}", "a".repeat(32 * 1024))).is_some());
+        assert!(request_path(&format!("/{}", "a".repeat(8_191))).is_some());
+        assert_eq!(request_path(&format!("/{}", "a".repeat(8_192))), None);
         for value in ["\0", "\u{10ffff}", "/\u{10ffff}", "/%"] {
             assert_eq!(request_path(value), None, "{value:?}");
         }

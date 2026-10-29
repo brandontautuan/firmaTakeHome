@@ -429,11 +429,13 @@ Normalize incoming request metadata before matching.
 - Fold to uppercase (see method validation).
 - Validate according to HTTP token syntax.
 - Reject malformed tokens.
+- Reject methods longer than 32 bytes.
 - Do not infer method semantics.
 
 #### Path
 
 - Empty path becomes `/`.
+- Reject a request path input longer than 8 KiB before stripping a query or fragment.
 - Remove query strings and fragments before matching.
 - Require a leading `/` for nonempty paths.
 - Reject duplicate slashes (empty segments): servers disagree on whether `//` collapses.
@@ -687,6 +689,8 @@ Configuration limits are deliberate: a normalized path pattern is at most
 analysis spends at most 4,000,000 product-NFA states across the entire load.
 The limits bound configuration-controlled memory and CPU use while preserving
 the linear runtime scan.
+Request inputs are also bounded: methods are at most 32 bytes and raw path
+inputs are at most 8 KiB before query or fragment handling.
 
 The public functions remain asynchronous because the starter API requires it, but internal parsing and matching do not require asynchronous tasks.
 

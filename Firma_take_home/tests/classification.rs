@@ -185,3 +185,25 @@ action_class = "payment.read"
         Some("payment.read")
     );
 }
+
+#[tokio::test]
+async fn request_size_limits_fail_closed_at_the_boundary() {
+    let classifier = load(&[ACME]).await.unwrap();
+    let accepted = format!("/v1/{}", "a".repeat(8_188));
+    let rejected = format!("/v1/{}", "a".repeat(8_189));
+    assert_eq!(accepted.len(), 8_192);
+    assert_eq!(
+        classifier.classify("GET", "api.acme.com", &accepted).await,
+        Some("payment.read")
+    );
+    assert_eq!(
+        classifier.classify("GET", "api.acme.com", &rejected).await,
+        None
+    );
+    assert_eq!(
+        classifier
+            .classify(&"G".repeat(33), "api.acme.com", "/v1/x")
+            .await,
+        None
+    );
+}
