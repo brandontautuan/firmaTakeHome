@@ -66,8 +66,12 @@ pub enum SetError {
     UnsupportedFormatVersion(u32),
     #[error("{0} must not be empty or malformed")]
     InvalidField(&'static str),
-    #[error("rule {rule} has an invalid {field}")]
-    InvalidRule { rule: usize, field: &'static str },
+    #[error("rule {rule} has invalid {field} value {value:?}")]
+    InvalidRule {
+        rule: usize,
+        field: &'static str,
+        value: String,
+    },
     #[error("rule {rule} names unsupported action class {action_class:?}")]
     UnknownActionClass { rule: usize, action_class: String },
 }
@@ -133,14 +137,17 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
                     CompileError::Host => SetError::InvalidRule {
                         rule: rule_index,
                         field: "subdomain",
+                        value: rule.subdomain.clone().unwrap_or_default(),
                     },
                     CompileError::Method => SetError::InvalidRule {
                         rule: rule_index,
                         field: "method",
+                        value: rule.method.clone().unwrap_or_default(),
                     },
                     CompileError::Path => SetError::InvalidRule {
                         rule: rule_index,
                         field: "path",
+                        value: rule.path.clone().unwrap_or_default(),
                     },
                     CompileError::ActionClass(action_class) => SetError::UnknownActionClass {
                         rule: rule_index,

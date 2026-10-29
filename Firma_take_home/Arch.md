@@ -160,11 +160,14 @@ Firma_take_home/
 │   └── matcher.rs
 └── tests/
     ├── example.rs
-    ├── config_validation.rs
     ├── classification.rs
     ├── conflicts.rs
+    ├── robustness.rs
     └── security.rs
 ```
+
+Configuration-validation tests live beside the parser in `src/config.rs`;
+`tests/robustness.rs` covers generated malformed and valid request inputs.
 
 #### `lib.rs`
 
@@ -606,41 +609,22 @@ Avoid silently selecting the first encountered rule.
 
 Replace the placeholder `LoadError`.
 
-Use a `thiserror`-based enum with variants corresponding to major failure categories.
+The implemented `LoadError` variants are `InvalidSet`, `ConflictingRules`,
+`ConflictAnalysisTooComplex`, and `TooManyRules`. `InvalidSet` wraps the
+set-local `SetError` variants `Toml`, `UnsupportedFormatVersion`,
+`InvalidField`, `InvalidRule`, and `UnknownActionClass`.
 
-Suggested categories:
-
-- Invalid TOML.
-- Unsupported format version.
-- Missing or empty required value.
-- Invalid hostname.
-- Invalid method.
-- Invalid subdomain.
-- Invalid path pattern.
-- Invalid action class.
-- Empty rule set.
-- Conflicting rules.
-- Unsupported or ambiguous configuration.
-
-The implemented `LoadError` wraps a set-local `SetError` for TOML and
-validation failures, and otherwise reports `ConflictingRules`,
-`ConflictAnalysisTooComplex`, or `TooManyRules`. The latter two make resource
-limits explicit rather than treating them as an arbitrary conflict.
-
-Every error should identify the relevant mapping set by input index and, when available, its declared name.
-
-Rule-specific errors should include the rule index.
-
-Conflict errors should identify both rules and both mapping sets.
+Set and rule indexes are 0-based. Every set-local error identifies the input
+set and its declared name when parsing reached it. `InvalidRule` includes the
+rule index, field, and Debug-quoted rejected value; conflicts identify both
+rule locations and their mapping sets.
 
 For example:
 
 ```text
-Mapping set 2 "Acme Payments", rule 3:
-Unknown action class "payment.delete"
+mapping set 2 "Acme Payments": rule 3 names unsupported action class "payment.delete"
 
-Mapping sets 1 rule 2 and 3 rule 4:
-Conflicting classifications for overlapping requests
+mapping set 1 "A" rule 2 and mapping set 3 "B" rule 4 overlap with equal specificity but different action classes
 ```
 
 Avoid using `unwrap()` or `expect()` for user-provided configuration.

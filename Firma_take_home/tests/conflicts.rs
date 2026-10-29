@@ -312,4 +312,22 @@ async fn invalid_set_errors_identify_set_name_and_rule() {
         ) => assert!(error.to_string().starts_with("mapping set 1: invalid TOML")),
         other => panic!("unexpected {:?}", other.err()),
     }
+
+    let invalid_method = set(
+        "Bad method",
+        "acme.com",
+        &rule(None, Some("GET /"), None, "repo.read"),
+    );
+    match load(&[&invalid_method]).await {
+        Err(LoadError::InvalidSet {
+            error:
+                SetError::InvalidRule {
+                    rule: 0,
+                    field: "method",
+                    value,
+                },
+            ..
+        }) => assert_eq!(value, "GET /"),
+        other => panic!("unexpected {:?}", other.err()),
+    }
 }

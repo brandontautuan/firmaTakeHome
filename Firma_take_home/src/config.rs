@@ -65,6 +65,7 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
             return Err(SetError::InvalidRule {
                 rule: index,
                 field: "method",
+                value: method.clone(),
             });
         }
         if let Some(subdomain) = &rule.subdomain
@@ -74,6 +75,7 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
             return Err(SetError::InvalidRule {
                 rule: index,
                 field: "subdomain",
+                value: subdomain.clone(),
             });
         }
         if let Some(path) = &rule.path {
@@ -81,12 +83,14 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
                 return Err(SetError::InvalidRule {
                     rule: index,
                     field: "path",
+                    value: path.clone(),
                 });
             };
             if normalized.len() > MAX_PATTERN_BYTES {
                 return Err(SetError::InvalidRule {
                     rule: index,
                     field: "path",
+                    value: path.clone(),
                 });
             }
         }
