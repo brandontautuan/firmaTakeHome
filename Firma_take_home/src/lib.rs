@@ -152,11 +152,13 @@ impl Classifier {
         // Many servers route `/x/` and `/x` to the same handler. If the two
         // spellings classify differently we cannot know which action runs, so
         // the request is left unclassified (and therefore denied).
-        if let Some(stripped) = path.strip_suffix('/').filter(|rest| !rest.is_empty()) {
-            let alternative = self.best_match(&method, &host, stripped);
-            if alternative.is_some() && alternative != class {
-                return None;
-            }
+        let alternate_path = match path.strip_suffix('/').filter(|rest| !rest.is_empty()) {
+            Some(stripped) => stripped.to_owned(),
+            None if path != "/" => format!("{path}/"),
+            None => return class,
+        };
+        if self.best_match(&method, &host, &alternate_path) != class {
+            return None;
         }
         class
     }

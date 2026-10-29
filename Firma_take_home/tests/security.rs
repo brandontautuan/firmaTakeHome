@@ -79,16 +79,21 @@ async fn empty_path_segments_are_unclassified() {
 #[tokio::test]
 async fn trailing_slash_that_changes_the_class_is_unclassified() {
     let c = load(&[ACME]).await.unwrap();
+    // The alternative trailing-slash spelling falls through to `/v1/*`, so
+    // neither form may be classified.
     assert_eq!(
         c.classify("POST", "api.acme.com", "/v1/payouts").await,
-        Some("payment.create")
+        None
     );
-    // `/v1/payouts/` alone would match `/v1/*` (payment.read).
     assert_eq!(
         c.classify("POST", "api.acme.com", "/v1/payouts/").await,
         None
     );
     // No disagreement: both spellings are payment.read.
+    assert_eq!(
+        c.classify("GET", "api.acme.com", "/v1/balance").await,
+        Some("payment.read")
+    );
     assert_eq!(
         c.classify("GET", "api.acme.com", "/v1/balance/").await,
         Some("payment.read")
