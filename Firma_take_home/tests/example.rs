@@ -28,7 +28,8 @@ action_class = "payment.read"
 async fn exact_rule_matches() {
     let c = load(&[ACME]).await.unwrap();
     assert_eq!(
-        c.classify("GET", "api.acme.com", "/v1/payment_intents").await,
+        c.classify("GET", "api.acme.com", "/v1/payment_intents")
+            .await,
         Some("payment.read")
     );
 }
@@ -37,7 +38,8 @@ async fn exact_rule_matches() {
 async fn method_less_rule_matches_any_method() {
     let c = load(&[ACME]).await.unwrap();
     assert_eq!(
-        c.classify("DELETE", "api.acme.com", "/v1/refunds/re_1").await,
+        c.classify("DELETE", "api.acme.com", "/v1/refunds/re_1")
+            .await,
         Some("payment.refund")
     );
 }
@@ -45,11 +47,17 @@ async fn method_less_rule_matches_any_method() {
 #[tokio::test]
 async fn rule_without_subdomain_applies_to_the_host_itself() {
     let c = load(&[ACME]).await.unwrap();
-    assert_eq!(c.classify("GET", "acme.com", "/pricing").await, Some("payment.read"));
+    assert_eq!(
+        c.classify("GET", "acme.com", "/pricing").await,
+        Some("payment.read")
+    );
 }
 
 #[tokio::test]
 async fn unmatched_request_is_unclassified() {
     let c = load(&[ACME]).await.unwrap();
-    assert_eq!(c.classify("GET", "api.acme.com", "/v2/anything").await, None);
+    assert_eq!(
+        c.classify("GET", "api.acme.com", "/v2/anything").await,
+        None
+    );
 }
