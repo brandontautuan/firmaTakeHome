@@ -65,15 +65,20 @@ async fn method_matching_is_case_sensitive() {
 }
 
 #[tokio::test]
-async fn empty_path_segments_are_unclassified() {
+async fn duplicate_path_segments_are_preserved_for_matching() {
     let c = load(&[ACME]).await.unwrap();
-    for path in ["/v1//refunds/x", "//v1/refunds/x", "/v1/refunds//x"] {
-        assert_eq!(
-            c.classify("POST", "api.acme.com", path).await,
-            None,
-            "{path}"
-        );
-    }
+    assert_eq!(
+        c.classify("POST", "api.acme.com", "/v1//refunds/x").await,
+        Some("payment.read")
+    );
+    assert_eq!(
+        c.classify("POST", "api.acme.com", "//v1/refunds/x").await,
+        None
+    );
+    assert_eq!(
+        c.classify("POST", "api.acme.com", "/v1/refunds//x").await,
+        Some("payment.refund")
+    );
 }
 
 #[tokio::test]
