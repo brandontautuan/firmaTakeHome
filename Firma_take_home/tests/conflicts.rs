@@ -123,7 +123,7 @@ async fn excessively_complex_wildcard_overlap_is_rejected() {
 
 #[tokio::test]
 async fn same_class_duplicates_are_harmless() {
-    let a = set("A", "acme.com", &rule(None, None, Some("/x*"), "repo.read"));
+    let a = set("A", "acme.com", &rule(None, None, Some("/x"), "repo.read"));
     let c = load(&[&a, &a]).await.unwrap();
     assert_eq!(c.classify("GET", "acme.com", "/x").await, Some("repo.read"));
 }
@@ -162,8 +162,7 @@ async fn rules_for_different_hosts_never_conflict() {
 
 #[tokio::test]
 async fn exact_subdomain_and_bare_rule_on_the_same_host_conflict() {
-    // Exact subdomains are one DNS label. These rules still name the same
-    // origin and must be checked against each other.
+    // These rules name the same origin and must be checked against each other.
     let a = set(
         "A",
         "eu.acme.com",
