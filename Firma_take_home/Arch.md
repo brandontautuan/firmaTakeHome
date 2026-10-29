@@ -417,6 +417,7 @@ Normalize incoming request metadata before matching.
 - Reject userinfo.
 - Reject invalid domain labels.
 - Reject unsupported IP literal representations.
+- Reject hostnames whose final label is all numeric, including abbreviated or noncanonical IPv4-like forms.
 - Preserve subdomain boundaries.
 
 `api.acme.com` must never match `evilapi.acme.com` unless explicitly configured to do so.

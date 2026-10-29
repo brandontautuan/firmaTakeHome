@@ -22,7 +22,14 @@ pub(crate) fn host(input: &str) -> Option<String> {
     }
 
     let name = name.strip_suffix('.').unwrap_or(name);
-    if !is_dns_name(name) || name.parse::<std::net::Ipv4Addr>().is_ok() {
+    if !is_dns_name(name)
+        || name.parse::<std::net::Ipv4Addr>().is_ok()
+        || name
+            .rsplit_once('.')
+            .map_or(name, |(_, label)| label)
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
         return None;
     }
     Some(name.to_ascii_lowercase())
@@ -201,6 +208,9 @@ mod tests {
             "acme.com:99999",
             "u@acme.com",
             "192.0.2.1",
+            "010.0.0.1",
+            "127.1",
+            "1.2.3.4.5",
             "[::1]",
             "acme..com",
             "é.com",

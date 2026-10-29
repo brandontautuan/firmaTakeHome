@@ -56,7 +56,7 @@ Independently review the completed implementation for bypasses, specificity ambi
 Shared behavior contract
 These are chosen policies from the technical design, not all explicit README requirements. If a policy conflicts with a direct README requirement, follow README and flag the difference.
 
-Hosts: Case-insensitive ASCII DNS hostnames; lower-case for comparison. Request host may have a valid numeric port and one trailing DNS dot; reject empty labels, malformed ports, userinfo, unsupported IP literals, and ambiguous syntax. Match on label boundaries, never arbitrary suffixes. In configuration, host is the base hostname; omitted subdomain matches only the bare host; an exact subdomain = "api" matches only api.base; subdomain = "*" matches any nonempty sequence of subdomain labels but not the bare host.
+Hosts: Case-insensitive ASCII DNS hostnames; lower-case for comparison. Request host may have a valid numeric port and one trailing DNS dot; reject empty labels, malformed ports, userinfo, unsupported IP literals (including a hostname with an all-numeric final label), and ambiguous syntax. Match on label boundaries, never arbitrary suffixes. In configuration, host is the base hostname; omitted subdomain matches only the bare host; an exact subdomain = "api" matches only api.base; subdomain = "*" matches any nonempty sequence of subdomain labels but not the bare host.
 
 Methods: HTTP tokens, folded to uppercase in rules and requests so `delete` cannot skip a `DELETE` rule; reject malformed/empty method tokens. Omitted rule method matches any valid method.
 

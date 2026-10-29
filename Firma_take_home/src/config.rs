@@ -216,6 +216,8 @@ rules = []
         );
         assert!(parse(&VALID.replace("host = \"acme.com\"", "host = \"acme.com:443\"")).is_err());
         assert!(parse(&VALID.replace("host = \"acme.com\"", "host = \"192.0.2.1\"")).is_err());
+        assert!(parse(&VALID.replace("host = \"acme.com\"", "host = \"010.0.0.1\"")).is_err());
+        assert!(parse(&VALID.replace("host = \"acme.com\"", "host = \"127.1\"")).is_err());
     }
 
     #[test]
