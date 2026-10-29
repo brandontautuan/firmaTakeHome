@@ -2,14 +2,14 @@
 
 use serde::Deserialize;
 
-use crate::{ACTION_CLASSES, LoadError, normalize};
+use crate::{ACTION_CLASSES, SetError, normalize};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MappingSet {
     pub(crate) format_version: u32,
     pub(crate) name: String,
-    pub(crate) description: String,
+    pub(crate) description: Option<String>,
     pub(crate) host: String,
     pub(crate) rules: Vec<Rule>,
 }
@@ -23,27 +23,36 @@ pub(crate) struct Rule {
     pub(crate) action_class: String,
 }
 
-/// Converts one TOML document to a checked mapping set.
-pub(crate) fn parse(input: &str) -> Result<MappingSet, LoadError> {
-    let set: MappingSet = toml::from_str(input).map_err(LoadError::Toml)?;
-    validate(&set)?;
-    Ok(set)
+/// Converts one TOML document to a checked mapping set. Errors carry the
+/// set's declared name when the document parsed far enough to have one.
+pub(crate) fn parse(input: &str) -> Result<MappingSet, (Option<String>, SetError)> {
+    let set: MappingSet = toml::from_str(input).map_err(|error| (None, SetError::Toml(error)))?;
+    match validate(&set) {
+        Ok(()) => Ok(set),
+        Err(error) => Err((Some(set.name), error)),
+    }
 }
 
-fn validate(set: &MappingSet) -> Result<(), LoadError> {
+fn validate(set: &MappingSet) -> Result<(), SetError> {
     if set.format_version != 1 {
-        return Err(LoadError::UnsupportedFormatVersion(set.format_version));
+        return Err(SetError::UnsupportedFormatVersion(set.format_version));
     }
     required_text("name", &set.name)?;
-    required_text("description", &set.description)?;
+    if set
+        .description
+        .as_deref()
+        .is_some_and(|description| description.chars().any(char::is_control))
+    {
+        return Err(SetError::InvalidField("description"));
+    }
     validate_host(&set.host)?;
     if set.rules.is_empty() {
-        return Err(LoadError::InvalidField("rules"));
+        return Err(SetError::InvalidField("rules"));
     }
 
     for (index, rule) in set.rules.iter().enumerate() {
         if !ACTION_CLASSES.contains(&rule.action_class.as_str()) {
-            return Err(LoadError::UnknownActionClass {
+            return Err(SetError::UnknownActionClass {
                 rule: index,
                 action_class: rule.action_class.clone(),
             });
@@ -51,7 +60,7 @@ fn validate(set: &MappingSet) -> Result<(), LoadError> {
         if let Some(method) = &rule.method
             && normalize::method(method).is_none()
         {
-            return Err(LoadError::InvalidRule {
+            return Err(SetError::InvalidRule {
                 rule: index,
                 field: "method",
             });
@@ -60,7 +69,7 @@ fn validate(set: &MappingSet) -> Result<(), LoadError> {
             && subdomain != "*"
             && (!is_dns_name(subdomain) || normalize::host(subdomain).is_none())
         {
-            return Err(LoadError::InvalidRule {
+            return Err(SetError::InvalidRule {
                 rule: index,
                 field: "subdomain",
             });
@@ -68,7 +77,7 @@ fn validate(set: &MappingSet) -> Result<(), LoadError> {
         if let Some(path) = &rule.path
             && normalize::pattern_path(path).is_none()
         {
-            return Err(LoadError::InvalidRule {
+            return Err(SetError::InvalidRule {
                 rule: index,
                 field: "path",
             });
@@ -77,15 +86,15 @@ fn validate(set: &MappingSet) -> Result<(), LoadError> {
     Ok(())
 }
 
-fn required_text(field: &'static str, value: &str) -> Result<(), LoadError> {
+fn required_text(field: &'static str, value: &str) -> Result<(), SetError> {
     if value.trim().is_empty() || value.chars().any(char::is_control) {
-        Err(LoadError::InvalidField(field))
+        Err(SetError::InvalidField(field))
     } else {
         Ok(())
     }
 }
 
-fn validate_host(host: &str) -> Result<(), LoadError> {
+fn validate_host(host: &str) -> Result<(), SetError> {
     // Mapping hosts name an origin, not an HTTP authority. Ports and trailing
     // dots are accepted for request authorities but create duplicate mapping
     // identities, so reject them here.
@@ -96,7 +105,7 @@ fn validate_host(host: &str) -> Result<(), LoadError> {
     {
         Ok(())
     } else {
-        Err(LoadError::InvalidField("host"))
+        Err(SetError::InvalidField("host"))
     }
 }
 
@@ -140,7 +149,6 @@ action_class = "payment.read"
         for field in [
             "format_version = 1\n",
             "name = \"Acme\"\n",
-            "description = \"Acme API\"\n",
             "host = \"acme.com\"\n",
         ] {
             let input = VALID.replace(field, "");
@@ -169,6 +177,15 @@ rules = []
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn accepts_an_omitted_or_empty_description() {
+        let omitted = VALID.replace("description = \"Acme API\"\n", "");
+        assert_eq!(parse(&omitted).unwrap().description, None);
+
+        let empty = VALID.replace("description = \"Acme API\"", "description = \"\"");
+        assert_eq!(parse(&empty).unwrap().description.as_deref(), Some(""));
     }
 
     #[test]

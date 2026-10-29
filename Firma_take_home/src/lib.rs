@@ -7,6 +7,8 @@ mod config;
 mod matcher;
 mod normalize;
 
+use std::fmt;
+
 use config::parse;
 use matcher::{CompileError, CompiledRule, find_conflict};
 
@@ -21,8 +23,31 @@ pub const ACTION_CLASSES: &[&str] = &[
     "llm.inference",
 ];
 
+/// Why a set of mapping files was rejected. Set and rule indexes are 0-based
+/// positions in the `sets` slice and the set's `rules` array.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
+    /// One mapping set is invalid on its own. `name` is absent when the set
+    /// could not be parsed far enough to read it.
+    #[error("mapping set {set}{}: {error}", display_name(.name))]
+    InvalidSet {
+        set: usize,
+        name: Option<String>,
+        #[source]
+        error: SetError,
+    },
+    /// Two rules, possibly from different sets, can match the same request
+    /// with equal specificity but name different action classes.
+    #[error("{first} and {second} overlap with equal specificity but different action classes")]
+    ConflictingRules {
+        first: RuleLocation,
+        second: RuleLocation,
+    },
+}
+
+/// The reason a single mapping set is invalid.
+#[derive(Debug, thiserror::Error)]
+pub enum SetError {
     #[error("invalid TOML: {0}")]
     Toml(#[from] toml::de::Error),
     #[error("unsupported format version {0}; expected 1")]
@@ -33,10 +58,30 @@ pub enum LoadError {
     InvalidRule { rule: usize, field: &'static str },
     #[error("rule {rule} names unsupported action class {action_class:?}")]
     UnknownActionClass { rule: usize, action_class: String },
-    #[error(
-        "rules {first} and {second} overlap with equal specificity but different action classes"
-    )]
-    ConflictingRules { first: usize, second: usize },
+}
+
+/// Where a rule came from, for conflict diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleLocation {
+    pub set: usize,
+    pub name: String,
+    pub rule: usize,
+}
+
+impl fmt::Display for RuleLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "mapping set {} {:?} rule {}",
+            self.set, self.name, self.rule
+        )
+    }
+}
+
+fn display_name(name: &Option<String>) -> String {
+    name.as_ref()
+        .map(|name| format!(" {name:?}"))
+        .unwrap_or_default()
 }
 
 /// An immutable, precompiled collection of mapping rules. Its contents are
@@ -49,10 +94,16 @@ pub struct Classifier {
 /// are rejected here, so mapping-file ordering never affects classification.
 pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
     let mut rules = Vec::new();
-    for input in sets {
-        let set = parse(input)?;
-        for rule in set.rules {
-            let index = rules.len();
+    let mut locations = Vec::new();
+    for (set_index, input) in sets.iter().enumerate() {
+        let set = parse(input).map_err(|(name, error)| LoadError::InvalidSet {
+            set: set_index,
+            name,
+            error,
+        })?;
+        for (rule_index, rule) in set.rules.into_iter().enumerate() {
+            // Validation already ran these checks, so this mapping only
+            // guards against the two modules drifting apart.
             let compiled = CompiledRule::new(
                 rule.method.as_deref(),
                 &set.host,
@@ -60,25 +111,31 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
                 rule.path.as_deref(),
                 rule.action_class,
             )
-            .map_err(|error| match error {
-                CompileError::Host => LoadError::InvalidRule {
-                    rule: index,
-                    field: "subdomain",
-                },
-                CompileError::Method => LoadError::InvalidRule {
-                    rule: index,
-                    field: "method",
-                },
-                CompileError::Path => LoadError::InvalidRule {
-                    rule: index,
-                    field: "path",
+            .map_err(|error| LoadError::InvalidSet {
+                set: set_index,
+                name: Some(set.name.clone()),
+                error: SetError::InvalidRule {
+                    rule: rule_index,
+                    field: match error {
+                        CompileError::Host => "subdomain",
+                        CompileError::Method => "method",
+                        CompileError::Path => "path",
+                    },
                 },
             })?;
             rules.push(compiled);
+            locations.push(RuleLocation {
+                set: set_index,
+                name: set.name.clone(),
+                rule: rule_index,
+            });
         }
     }
     if let Some((first, second)) = find_conflict(&rules) {
-        return Err(LoadError::ConflictingRules { first, second });
+        return Err(LoadError::ConflictingRules {
+            first: locations[first].clone(),
+            second: locations[second].clone(),
+        });
     }
     Ok(Classifier { rules })
 }
