@@ -123,8 +123,16 @@ impl CompiledRule {
 pub(crate) fn find_conflict(
     rules: &[CompiledRule],
 ) -> Result<Option<(usize, usize)>, ConflictCheckError> {
+    let mut checked_pairs = 0;
     for (right_index, right) in rules.iter().enumerate() {
         for (left_index, left) in rules[..right_index].iter().enumerate() {
+            checked_pairs += 1;
+            if checked_pairs > MAX_CONFLICT_PAIR_CHECKS {
+                return Err(ConflictCheckError::TooComplex {
+                    first: left_index,
+                    second: right_index,
+                });
+            }
             if left.action_class != right.action_class
                 && left.specificity == right.specificity
                 && methods_overlap(left.method.as_deref(), right.method.as_deref())
@@ -238,6 +246,7 @@ pub(crate) fn glob_matches(pattern: &str, value: &str) -> bool {
 /// Product traversal of two `*` glob NFAs. The sentinel represents any byte
 /// not currently present as a literal and keeps the alphabet finite.
 const MAX_GLOB_OVERLAP_STATES: usize = 1_000_000;
+const MAX_CONFLICT_PAIR_CHECKS: usize = 100_000;
 
 fn globs_overlap(left: &str, right: &str) -> Result<bool, ()> {
     let (left, right) = (left.as_bytes(), right.as_bytes());
@@ -361,6 +370,17 @@ mod tests {
                 first: 0,
                 second: 1
             })
+        ));
+    }
+
+    #[test]
+    fn rejects_configurations_that_exceed_the_pair_check_limit() {
+        let rules = (0..448)
+            .map(|_| rule(Some("api"), None, None, "payment.read"))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            find_conflict(&rules),
+            Err(ConflictCheckError::TooComplex { .. })
         ));
     }
 
