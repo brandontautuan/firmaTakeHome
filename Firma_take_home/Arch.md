@@ -336,6 +336,8 @@ It must contain at least two DNS labels; single-label public suffix-like bases
 such as `com` are too broad for a wildcard rule.
 
 Subdomain values must be either `*` or one or more valid DNS labels. Per the README, the rule host is the subdomain followed by `host`, so `subdomain = "api.eu"` with `host = "acme.com"` names `api.eu.acme.com`.
+Numeric exact subdomain labels are valid when the combined hostname is valid;
+standalone hexadecimal IPv4-like authorities are rejected.
 
 #### Method validation
 
@@ -626,8 +628,9 @@ set-local `SetError` variants `Toml`, `UnsupportedFormatVersion`,
 
 Set and rule indexes are 0-based. Every set-local error identifies the input
 set and its declared name when parsing reached it. `InvalidRule` includes the
-rule index, field, and Debug-quoted rejected value; conflicts identify both
-rule locations and their mapping sets.
+rule index, field, and Debug-quoted rejected value; diagnostic values are
+bounded to 256 bytes and marked as truncated. Conflicts identify both rule
+locations and their mapping sets.
 
 For example:
 

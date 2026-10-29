@@ -54,7 +54,7 @@ fn generated_request(state: &mut u64) -> (String, String, String) {
         "/",
     ][usize::try_from(next(state)).unwrap_or(0) % 5]
         .to_owned();
-    if next(state).is_multiple_of(5) {
+    if next(state) % 5 == 0 {
         (
             generated_text(state, 32),
             generated_text(state, 128),

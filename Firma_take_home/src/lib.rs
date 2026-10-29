@@ -24,6 +24,18 @@ pub const ACTION_CLASSES: &[&str] = &[
 ];
 
 const MAX_TOTAL_RULES: usize = 10_000;
+const MAX_DIAGNOSTIC_VALUE_BYTES: usize = 256;
+
+pub(crate) fn diagnostic_value(value: &str) -> String {
+    if value.len() <= MAX_DIAGNOSTIC_VALUE_BYTES {
+        return value.into();
+    }
+    let mut end = MAX_DIAGNOSTIC_VALUE_BYTES;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}… [truncated]", &value[..end])
+}
 
 /// Why a set of mapping files was rejected. Set and rule indexes are 0-based
 /// positions in the `sets` slice and the set's `rules` array.
@@ -137,21 +149,21 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
                     CompileError::Host => SetError::InvalidRule {
                         rule: rule_index,
                         field: "subdomain",
-                        value: rule.subdomain.clone().unwrap_or_default(),
+                        value: diagnostic_value(rule.subdomain.as_deref().unwrap_or_default()),
                     },
                     CompileError::Method => SetError::InvalidRule {
                         rule: rule_index,
                         field: "method",
-                        value: rule.method.clone().unwrap_or_default(),
+                        value: diagnostic_value(rule.method.as_deref().unwrap_or_default()),
                     },
                     CompileError::Path => SetError::InvalidRule {
                         rule: rule_index,
                         field: "path",
-                        value: rule.path.clone().unwrap_or_default(),
+                        value: diagnostic_value(rule.path.as_deref().unwrap_or_default()),
                     },
                     CompileError::ActionClass(action_class) => SetError::UnknownActionClass {
                         rule: rule_index,
-                        action_class,
+                        action_class: diagnostic_value(&action_class),
                     },
                 };
                 LoadError::InvalidSet {

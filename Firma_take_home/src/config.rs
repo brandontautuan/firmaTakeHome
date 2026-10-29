@@ -2,9 +2,7 @@
 
 use serde::Deserialize;
 
-use crate::{ACTION_CLASSES, SetError, normalize};
-
-const MAX_PATTERN_BYTES: usize = 1_024;
+use crate::{ACTION_CLASSES, SetError, diagnostic_value, normalize};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +54,7 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
         if !ACTION_CLASSES.contains(&rule.action_class.as_str()) {
             return Err(SetError::UnknownActionClass {
                 rule: index,
-                action_class: rule.action_class.clone(),
+                action_class: diagnostic_value(&rule.action_class),
             });
         }
         if let Some(method) = &rule.method
@@ -65,17 +63,19 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
             return Err(SetError::InvalidRule {
                 rule: index,
                 field: "method",
-                value: method.clone(),
+                value: diagnostic_value(method),
             });
         }
         if let Some(subdomain) = &rule.subdomain
             && subdomain != "*"
-            && (!is_dns_name(subdomain) || normalize::host(subdomain).is_none())
+            && (subdomain.parse::<std::net::Ipv4Addr>().is_ok()
+                || !is_dns_name(subdomain)
+                || normalize::host(&format!("{subdomain}.{}", set.host)).is_none())
         {
             return Err(SetError::InvalidRule {
                 rule: index,
                 field: "subdomain",
-                value: subdomain.clone(),
+                value: diagnostic_value(subdomain),
             });
         }
         if let Some(path) = &rule.path {
@@ -83,14 +83,14 @@ fn validate(set: &MappingSet) -> Result<(), SetError> {
                 return Err(SetError::InvalidRule {
                     rule: index,
                     field: "path",
-                    value: path.clone(),
+                    value: diagnostic_value(path),
                 });
             };
-            if normalized.len() > MAX_PATTERN_BYTES {
+            if normalized.len() > normalize::MAX_PATTERN_BYTES {
                 return Err(SetError::InvalidRule {
                     rule: index,
                     field: "path",
-                    value: path.clone(),
+                    value: diagnostic_value(path),
                 });
             }
         }
@@ -323,6 +323,15 @@ rules = []
     }
 
     #[test]
+    fn accepts_a_numeric_exact_subdomain() {
+        let input = VALID.replace(
+            "action_class = \"payment.read\"",
+            "subdomain = \"123\"\naction_class = \"payment.read\"",
+        );
+        assert!(parse(&input).is_ok());
+    }
+
+    #[test]
     fn rejects_path_patterns_over_the_limit() {
         let path = format!("/{}", "a".repeat(1_024));
         let input = VALID.replace(
@@ -330,6 +339,18 @@ rules = []
             &format!("path = {path:?}\naction_class = \"payment.read\""),
         );
         assert!(parse(&input).is_err());
+    }
+
+    #[test]
+    fn bounds_rejected_values_in_diagnostics() {
+        let method = "G".repeat(1_000_000);
+        let input = VALID.replace(
+            "action_class = \"payment.read\"",
+            &format!("method = {method:?}\naction_class = \"payment.read\""),
+        );
+        let error = parse(&input).unwrap_err().1.to_string();
+        assert!(error.contains("[truncated]"));
+        assert!(error.len() < 400, "diagnostic was {} bytes", error.len());
     }
 
     #[test]

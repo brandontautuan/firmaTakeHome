@@ -6,6 +6,7 @@
 
 const MAX_METHOD_BYTES: usize = 32;
 const MAX_REQUEST_PATH_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_PATTERN_BYTES: usize = 1_024;
 
 /// Returns a lowercase DNS hostname without one optional trailing dot or port.
 pub(crate) fn host(input: &str) -> Option<String> {
@@ -27,6 +28,7 @@ pub(crate) fn host(input: &str) -> Option<String> {
     let name = name.strip_suffix('.').unwrap_or(name);
     if !is_dns_name(name)
         || name.parse::<std::net::Ipv4Addr>().is_ok()
+        || is_hex_ipv4_like(name)
         || name
             .rsplit_once('.')
             .map_or(name, |(_, label)| label)
@@ -36,6 +38,12 @@ pub(crate) fn host(input: &str) -> Option<String> {
         return None;
     }
     Some(name.to_ascii_lowercase())
+}
+
+fn is_hex_ipv4_like(value: &str) -> bool {
+    value.strip_prefix("0x").is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
 }
 
 /// Validates an HTTP token and folds it to uppercase. HTTP methods are
@@ -245,6 +253,7 @@ mod tests {
             "010.0.0.1",
             "127.1",
             "1.2.3.4.5",
+            "0x7f000001",
             "[::1]",
             "acme..com",
             "é.com",

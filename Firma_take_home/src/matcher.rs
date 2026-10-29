@@ -87,8 +87,8 @@ impl CompiledRule {
             None => HostPattern::Bare(base_host),
             Some("*") => HostPattern::AnySubdomain(base_host),
             Some(value) => {
-                let value = normalize::host(value).ok_or(CompileError::Host)?;
-                HostPattern::Exact(format!("{value}.{base_host}"))
+                let host = format!("{value}.{base_host}");
+                HostPattern::Exact(normalize::host(&host).ok_or(CompileError::Host)?)
             }
         };
         let method = match method {
@@ -96,7 +96,13 @@ impl CompiledRule {
             None => None,
         };
         let path = match path {
-            Some(value) => Some(normalize::pattern_path(value).ok_or(CompileError::Path)?),
+            Some(value) => {
+                let normalized = normalize::pattern_path(value).ok_or(CompileError::Path)?;
+                (normalized.len() <= normalize::MAX_PATTERN_BYTES)
+                    .then_some(normalized)
+                    .ok_or(CompileError::Path)
+                    .map(Some)?
+            }
             None => None,
         };
         let folded_path = path
@@ -446,6 +452,15 @@ mod tests {
         assert!(matches!(
             CompiledRule::new(None, "acme.com", None, None, "unknown.class".into()),
             Err(CompileError::ActionClass(_))
+        ));
+    }
+
+    #[test]
+    fn compiler_enforces_the_pattern_length_limit() {
+        let path = format!("/{}", "a".repeat(1_024));
+        assert!(matches!(
+            CompiledRule::new(None, "acme.com", None, Some(&path), "repo.read".into()),
+            Err(CompileError::Path)
         ));
     }
 }
