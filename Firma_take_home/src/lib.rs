@@ -87,14 +87,27 @@ impl Classifier {
     /// Classifies a request. Malformed input is deliberately unclassified
     /// rather than coerced into a potentially broader rule.
     pub async fn classify(&self, method: &str, host: &str, path: &str) -> Option<&str> {
-        if !normalize::method(method) {
-            return None;
-        }
+        let method = normalize::method(method)?;
         let host = normalize::host(host)?;
         let path = normalize::request_path(path)?;
+        let class = self.best_match(&method, &host, &path);
+
+        // Many servers route `/x/` and `/x` to the same handler. If the two
+        // spellings classify differently we cannot know which action runs, so
+        // the request is left unclassified (and therefore denied).
+        if let Some(stripped) = path.strip_suffix('/').filter(|rest| !rest.is_empty()) {
+            let alternative = self.best_match(&method, &host, stripped);
+            if alternative.is_some() && alternative != class {
+                return None;
+            }
+        }
+        class
+    }
+
+    fn best_match(&self, method: &str, host: &str, path: &str) -> Option<&str> {
         self.rules
             .iter()
-            .filter(|rule| rule.matches(method, &host, &path))
+            .filter(|rule| rule.matches(method, host, path))
             .max_by(|left, right| left.compare_specificity(right))
             .map(|rule| rule.action_class.as_str())
     }

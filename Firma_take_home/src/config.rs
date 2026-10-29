@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use crate::{ACTION_CLASSES, LoadError};
+use crate::{ACTION_CLASSES, LoadError, normalize};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11,7 +11,6 @@ pub(crate) struct MappingSet {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) host: String,
-    #[serde(default)]
     pub(crate) rules: Vec<Rule>,
 }
 
@@ -38,6 +37,9 @@ fn validate(set: &MappingSet) -> Result<(), LoadError> {
     required_text("name", &set.name)?;
     required_text("description", &set.description)?;
     validate_host(&set.host)?;
+    if set.rules.is_empty() {
+        return Err(LoadError::InvalidField("rules"));
+    }
 
     for (index, rule) in set.rules.iter().enumerate() {
         if !ACTION_CLASSES.contains(&rule.action_class.as_str()) {
@@ -46,36 +48,37 @@ fn validate(set: &MappingSet) -> Result<(), LoadError> {
                 action_class: rule.action_class.clone(),
             });
         }
-        if let Some(method) = &rule.method {
-            if method.is_empty() || !method.bytes().all(is_http_token) {
-                return Err(LoadError::InvalidRule {
-                    rule: index,
-                    field: "method",
-                });
-            }
+        if let Some(method) = &rule.method
+            && normalize::method(method).is_none()
+        {
+            return Err(LoadError::InvalidRule {
+                rule: index,
+                field: "method",
+            });
         }
-        if let Some(subdomain) = &rule.subdomain {
-            if subdomain != "*" && !is_dns_name(subdomain) {
-                return Err(LoadError::InvalidRule {
-                    rule: index,
-                    field: "subdomain",
-                });
-            }
+        if let Some(subdomain) = &rule.subdomain
+            && subdomain != "*"
+            && (!is_dns_name(subdomain) || normalize::host(subdomain).is_none())
+        {
+            return Err(LoadError::InvalidRule {
+                rule: index,
+                field: "subdomain",
+            });
         }
-        if let Some(path) = &rule.path {
-            if !path.starts_with('/') {
-                return Err(LoadError::InvalidRule {
-                    rule: index,
-                    field: "path",
-                });
-            }
+        if let Some(path) = &rule.path
+            && normalize::pattern_path(path).is_none()
+        {
+            return Err(LoadError::InvalidRule {
+                rule: index,
+                field: "path",
+            });
         }
     }
     Ok(())
 }
 
 fn required_text(field: &'static str, value: &str) -> Result<(), LoadError> {
-    if value.trim().is_empty() {
+    if value.trim().is_empty() || value.chars().any(char::is_control) {
         Err(LoadError::InvalidField(field))
     } else {
         Ok(())
@@ -83,7 +86,14 @@ fn required_text(field: &'static str, value: &str) -> Result<(), LoadError> {
 }
 
 fn validate_host(host: &str) -> Result<(), LoadError> {
-    if is_dns_name(host) {
+    // Mapping hosts name an origin, not an HTTP authority. Ports and trailing
+    // dots are accepted for request authorities but create duplicate mapping
+    // identities, so reject them here.
+    if !host.contains(':')
+        && !host.ends_with('.')
+        && normalize::host(host).is_some()
+        && is_dns_name(host)
+    {
         Ok(())
     } else {
         Err(LoadError::InvalidField("host"))
@@ -102,27 +112,6 @@ fn is_dns_name(value: &str) -> bool {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         })
-}
-
-fn is_http_token(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(
-            byte,
-            b'!' | b'#'
-                | b'$'
-                | b'%'
-                | b'&'
-                | b'\''
-                | b'*'
-                | b'+'
-                | b'-'
-                | b'.'
-                | b'^'
-                | b'_'
-                | b'`'
-                | b'|'
-                | b'~'
-        )
 }
 
 #[cfg(test)]
@@ -157,12 +146,42 @@ action_class = "payment.read"
             let input = VALID.replace(field, "");
             assert!(parse(&input).is_err(), "expected {field:?} to be required");
         }
+        assert!(
+            parse(
+                r#"
+format_version = 1
+name = "Acme"
+description = "Acme API"
+host = "acme.com"
+"#
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                r#"
+format_version = 1
+name = "Acme"
+description = "Acme API"
+host = "acme.com"
+rules = []
+"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn rejects_unknown_top_level_and_rule_keys() {
-        assert!(parse(&format!("{VALID}\nowner = \"ops\"\n")).is_err());
-        assert!(parse(&VALID.replace("action_class", "action_clas")).is_err());
+        for key in ["owner", "format_versoin", "descriptin", "hosts"] {
+            assert!(
+                parse(&format!("{VALID}\n{key} = \"value\"\n")).is_err(),
+                "{key}"
+            );
+        }
+        for key in ["action_clas", "actionclass", "methd", "subdomian", "paths"] {
+            assert!(parse(&VALID.replace("action_class", key)).is_err(), "{key}");
+        }
     }
 
     #[test]
@@ -178,6 +197,8 @@ action_class = "payment.read"
             ))
             .is_err()
         );
+        assert!(parse(&VALID.replace("host = \"acme.com\"", "host = \"acme.com:443\"")).is_err());
+        assert!(parse(&VALID.replace("host = \"acme.com\"", "host = \"192.0.2.1\"")).is_err());
     }
 
     #[test]
@@ -205,6 +226,44 @@ action_class = "payment.read"
             ))
             .is_err()
         );
+        assert!(
+            parse(&VALID.replace(
+                "action_class = \"payment.read\"",
+                "subdomain = \"192.0.2.1\"\naction_class = \"payment.read\""
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&VALID.replace(
+                "action_class = \"payment.read\"",
+                "path = \"/v1/%2fadmin\"\naction_class = \"payment.read\""
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_hostnames_and_subdomains() {
+        for host in [
+            "-acme.com",
+            "acme-.com",
+            "acme..com",
+            "acme_com",
+            "acme.com.",
+            "acme.com:443",
+            "  acme.com",
+        ] {
+            let input = VALID.replace("host = \"acme.com\"", &format!("host = \"{host}\""));
+            assert!(parse(&input).is_err(), "host {host:?}");
+        }
+
+        for subdomain in ["-api", "api-", "api..internal", "api_internal", "api:443"] {
+            let input = VALID.replace(
+                "action_class = \"payment.read\"",
+                &format!("subdomain = \"{subdomain}\"\naction_class = \"payment.read\""),
+            );
+            assert!(parse(&input).is_err(), "subdomain {subdomain:?}");
+        }
     }
 
     #[test]

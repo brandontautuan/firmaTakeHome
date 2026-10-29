@@ -14,14 +14,11 @@ pub(crate) fn host(input: &str) -> Option<String> {
         Some((name, port)) => (name, Some(port)),
         None => (input, None),
     };
-    if let Some(port) = port {
-        if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
-            return None;
-        }
-        // Parsing also rejects values outside the TCP/UDP port range.
-        if port.parse::<u16>().is_err() {
-            return None;
-        }
+    // Parsing also rejects values outside the TCP/UDP port range.
+    if let Some(port) = port
+        && (!port.bytes().all(|byte| byte.is_ascii_digit()) || port.parse::<u16>().is_err())
+    {
+        return None;
     }
 
     let name = name.strip_suffix('.').unwrap_or(name);
@@ -31,9 +28,12 @@ pub(crate) fn host(input: &str) -> Option<String> {
     Some(name.to_ascii_lowercase())
 }
 
-/// Validates an HTTP token. HTTP methods are intentionally not case folded.
-pub(crate) fn method(input: &str) -> bool {
-    !input.is_empty() && input.bytes().all(is_http_token)
+/// Validates an HTTP token and upper-cases it. Methods are case-sensitive on
+/// the wire, but clients (Fetch, Node) upper-case common methods and some
+/// servers fold case. Folding here keeps `delete` from slipping past a
+/// `DELETE` rule into a broader method-less one.
+pub(crate) fn method(input: &str) -> Option<String> {
+    (!input.is_empty() && input.bytes().all(is_http_token)).then(|| input.to_ascii_uppercase())
 }
 
 /// Normalizes a request path. Empty input represents the origin-form `/`.
@@ -46,58 +46,76 @@ pub(crate) fn request_path(input: &str) -> Option<String> {
     normalize_path(path, false)
 }
 
-/// Normalizes a configuration path pattern while retaining literal `*` wildcards.
+/// Normalizes a configuration path pattern while retaining literal `*`
+/// wildcards. Query strings and fragments never reach the matcher, so a
+/// pattern containing one is a configuration mistake.
 pub(crate) fn pattern_path(input: &str) -> Option<String> {
-    let end = input.find(['?', '#']).unwrap_or(input.len());
-    normalize_path(&input[..end], true)
-}
-
-fn normalize_path(input: &str, pattern: bool) -> Option<String> {
-    if input.is_empty() || !input.is_ascii() || !input.starts_with('/') {
+    if input.contains(['?', '#']) {
         return None;
     }
-    validate_percent_escapes(input)?;
+    normalize_path(input, true)
+}
+
+/// Canonical form shared by requests and patterns: unreserved percent escapes
+/// decoded, other escapes upper-cased, dot segments removed. Empty segments
+/// (`//`), backslashes, and encoded separators are rejected because servers
+/// disagree on what they mean.
+fn normalize_path(input: &str, pattern: bool) -> Option<String> {
+    if !input.starts_with('/') {
+        return None;
+    }
+    let decoded = decode_unreserved(input)?;
+    if decoded.contains("//") {
+        return None;
+    }
 
     // A dot segment next to a wildcard cannot be canonicalized soundly: the
     // wildcard can span an unknown number of path segments. Reject rather than
     // assigning it a meaning that a URL client or server may not share.
     if pattern
-        && input.contains('*')
-        && input
+        && decoded.contains('*')
+        && decoded
             .split('/')
-            .any(|segment| dot_segment_len(segment).is_some())
+            .any(|segment| segment == "." || segment == "..")
     {
         return None;
     }
-    let canonical = input
-        .split('/')
-        .map(|segment| match dot_segment_len(segment) {
-            Some(1) => ".",
-            Some(2) => "..",
-            _ => segment,
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-    remove_dot_segments(&canonical)
+    Some(remove_dot_segments(&decoded))
 }
 
-fn validate_percent_escapes(input: &str) -> Option<()> {
+/// RFC 3986 section 6.2.2 normalization: `%72` and `r` are the same path, so
+/// decode escaped unreserved bytes and upper-case the rest. Decoding happens
+/// once; `%25` stays `%25`.
+fn decode_unreserved(input: &str) -> Option<String> {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let bytes = input.as_bytes();
+    let mut output = String::with_capacity(input.len());
     let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let hi = *bytes.get(index + 1)?;
-            let lo = *bytes.get(index + 2)?;
-            let value = (hex(hi)? << 4) | hex(lo)?;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b'%' {
+            let hi = hex(*bytes.get(index + 1)?)?;
+            let lo = hex(*bytes.get(index + 2)?)?;
+            let value = (hi << 4) | lo;
             if matches!(value, b'/' | b'\\') {
                 return None;
             }
+            if value.is_ascii_alphanumeric() || matches!(value, b'-' | b'.' | b'_' | b'~') {
+                output.push(char::from(value));
+            } else {
+                output.push('%');
+                output.push(char::from(HEX[usize::from(hi)]));
+                output.push(char::from(HEX[usize::from(lo)]));
+            }
             index += 3;
         } else {
+            if !byte.is_ascii_graphic() || byte == b'\\' {
+                return None;
+            }
+            output.push(char::from(byte));
             index += 1;
         }
     }
-    Some(())
+    Some(output)
 }
 
 fn hex(byte: u8) -> Option<u8> {
@@ -109,68 +127,30 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn dot_segment_len(segment: &str) -> Option<usize> {
-    let mut bytes = Vec::with_capacity(segment.len());
-    let raw = segment.as_bytes();
-    let mut index = 0;
-    while index < raw.len() {
-        if raw[index] == b'%' {
-            let (&hi, &lo) = raw.get(index + 1).zip(raw.get(index + 2))?;
-            let value = hex(hi).zip(hex(lo)).map(|(hi, lo)| (hi << 4) | lo)?;
-            bytes.push(value);
-            index += 3;
-        } else {
-            bytes.push(raw[index]);
-            index += 1;
+/// RFC 3986 dot-segment removal for an absolute path without empty segments.
+/// A stack keeps this linear in the path length.
+fn remove_dot_segments(input: &str) -> String {
+    let mut segments = Vec::new();
+    // A path ending in `.` or `..` names a directory, as `/a/b/..` -> `/a/`.
+    let mut trailing_slash = false;
+    for segment in input.split('/').skip(1) {
+        match segment {
+            "." => trailing_slash = true,
+            ".." => {
+                segments.pop();
+                trailing_slash = true;
+            }
+            _ => {
+                segments.push(segment);
+                trailing_slash = false;
+            }
         }
     }
-    match bytes.as_slice() {
-        b"." => Some(1),
-        b".." => Some(2),
-        _ => None,
+    let mut output = format!("/{}", segments.join("/"));
+    if trailing_slash && !output.ends_with('/') {
+        output.push('/');
     }
-}
-
-/// RFC 3986's dot-segment algorithm, operating on validated ASCII text.
-fn remove_dot_segments(input: &str) -> Option<String> {
-    let mut remaining = input.to_owned();
-    let mut output = String::with_capacity(input.len());
-    while !remaining.is_empty() {
-        if remaining.starts_with("../") {
-            remaining.drain(..3);
-        } else if remaining.starts_with("./") {
-            remaining.drain(..2);
-        } else if remaining == "/." {
-            remaining.replace_range(.., "/");
-        } else if remaining.starts_with("/./") {
-            remaining.replace_range(..3, "/");
-        } else if remaining == "/.." {
-            remaining.replace_range(.., "/");
-            pop_last_segment(&mut output);
-        } else if remaining.starts_with("/../") {
-            remaining.replace_range(..4, "/");
-            pop_last_segment(&mut output);
-        } else if remaining == "." || remaining == ".." {
-            remaining.clear();
-        } else {
-            let end = if let Some(stripped) = remaining.strip_prefix('/') {
-                stripped.find('/').map_or(remaining.len(), |i| i + 1)
-            } else {
-                remaining.find('/').unwrap_or(remaining.len())
-            };
-            output.push_str(&remaining[..end]);
-            remaining.drain(..end);
-        }
-    }
-    Some(output)
-}
-
-fn pop_last_segment(output: &mut String) {
-    if let Some(index) = output.rfind('/') {
-        output.truncate(index);
-    } else {
-        output.clear();
-    }
+    output
 }
 
 fn is_dns_name(value: &str) -> bool {
@@ -231,11 +211,12 @@ mod tests {
     }
 
     #[test]
-    fn methods_are_case_sensitive_tokens() {
-        assert!(method("GET"));
-        assert!(method("get"));
+    fn methods_are_tokens_folded_to_upper_case() {
+        assert_eq!(method("GET"), Some("GET".into()));
+        assert_eq!(method("delete"), Some("DELETE".into()));
+        assert_eq!(method("Patch"), Some("PATCH".into()));
         for value in ["", "GET ", "GET\n", "é"] {
-            assert!(!method(value), "{value:?}");
+            assert_eq!(method(value), None, "{value:?}");
         }
     }
 
@@ -244,13 +225,27 @@ mod tests {
         assert_eq!(request_path(""), Some("/".into()));
         assert_eq!(request_path("/v1/../admin?q=1#x"), Some("/admin".into()));
         assert_eq!(request_path("/v1/%2e%2e/admin"), Some("/admin".into()));
-        assert_eq!(
-            request_path("/v1//payments/"),
-            Some("/v1//payments/".into())
-        );
-        for value in ["relative", "/x%ZZ", "/x%2f", "/x%5C", "/é"] {
-            assert_eq!(request_path(value), None, "{value}");
+        assert_eq!(request_path("/a/b/.."), Some("/a/".into()));
+        assert_eq!(request_path("/a/./b/."), Some("/a/b/".into()));
+        assert_eq!(request_path("/../../x"), Some("/x".into()));
+        assert_eq!(request_path("/v1/payments/"), Some("/v1/payments/".into()));
+        for value in [
+            "relative", "/x%ZZ", "/x%2f", "/x%5C", "/x\\y", "/é", "/a b", "/a\0", "/v1//x", "//",
+        ] {
+            assert_eq!(request_path(value), None, "{value:?}");
         }
+    }
+
+    #[test]
+    fn paths_decode_unreserved_escapes_only() {
+        assert_eq!(request_path("/v1/%72efunds"), Some("/v1/refunds".into()));
+        assert_eq!(request_path("/%7Euser/%5f"), Some("/~user/_".into()));
+        assert_eq!(request_path("/a%3a%2A"), Some("/a%3A%2A".into()));
+        // No double decoding: `%252e` is a literal `%2e`, not a dot segment.
+        assert_eq!(
+            request_path("/a/%252e%252e/b"),
+            Some("/a/%252e%252e/b".into())
+        );
     }
 
     #[test]
@@ -259,8 +254,13 @@ mod tests {
             pattern_path("/v1/*/refunds/**"),
             Some("/v1/*/refunds/**".into())
         );
+        assert_eq!(
+            pattern_path("/v1/%72efunds/*"),
+            Some("/v1/refunds/*".into())
+        );
         assert_eq!(pattern_path("/v1/*/../admin"), None);
-        assert_eq!(pattern_path("/v1/*?debug=true"), Some("/v1/*".into()));
+        assert_eq!(pattern_path("/v1/*?debug=true"), None);
+        assert_eq!(pattern_path("/v1//x"), None);
     }
 
     #[test]
