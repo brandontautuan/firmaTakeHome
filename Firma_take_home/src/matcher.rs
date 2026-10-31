@@ -148,10 +148,21 @@ impl CompiledRule {
     }
 }
 
+/// Total bytes conflict analysis may read across all eligible path pairs. The
+/// amount charged depends only on the two patterns, so whether a configuration
+/// fits does not depend on rule order or on the machine.
+const MAX_CONFLICT_WORK_BYTES: u64 = 4_000_000_000;
+
 pub(crate) fn find_conflict(
     rules: &[CompiledRule],
 ) -> Result<Option<(usize, usize)>, ConflictCheckError> {
-    let mut remaining_glob_overlap_states = MAX_TOTAL_GLOB_OVERLAP_STATES;
+    find_conflict_within(rules, MAX_CONFLICT_WORK_BYTES)
+}
+
+fn find_conflict_within(
+    rules: &[CompiledRule],
+    mut remaining_work: u64,
+) -> Result<Option<(usize, usize)>, ConflictCheckError> {
     for (right_index, right) in rules.iter().enumerate() {
         for (left_index, left) in rules[..right_index].iter().enumerate() {
             if left.action_class != right.action_class
@@ -162,7 +173,7 @@ pub(crate) fn find_conflict(
                 match paths_overlap(
                     left.path.as_deref(),
                     right.path.as_deref(),
-                    &mut remaining_glob_overlap_states,
+                    &mut remaining_work,
                 ) {
                     Ok(true) => return Ok(Some((left_index, right_index))),
                     Ok(false) => {}
@@ -235,49 +246,74 @@ fn hosts_overlap(left: &HostPattern, right: &HostPattern) -> bool {
             host_matches(&HostPattern::AnySubdomain(base.clone()), host)
         }
         (HostPattern::AnySubdomain(a), HostPattern::AnySubdomain(b)) => {
-            a == b || a.ends_with(&format!(".{b}")) || b.ends_with(&format!(".{a}"))
+            a == b || is_subdomain_of(a, b) || is_subdomain_of(b, a)
         }
     }
+}
+
+fn is_subdomain_of(host: &str, base: &str) -> bool {
+    host.strip_suffix(base)
+        .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 fn paths_overlap(
     left: Option<&str>,
     right: Option<&str>,
-    remaining_states: &mut usize,
+    remaining_work: &mut u64,
 ) -> Result<bool, ()> {
     // Equal patterns always overlap. More importantly, this check must happen
-    // before spending the bounded wildcard-analysis budget: an identical pair
-    // is an unambiguous conflict, not an analysis failure.
+    // before spending the bounded analysis budget: an identical pair is an
+    // unambiguous conflict, not an analysis failure.
     if left == right {
         return Ok(true);
     }
-    match (left, right) {
-        (None, _) | (_, None) => Ok(true),
-        (Some(left), Some(right)) if !left.contains('*') && !right.contains('*') => Ok(false),
-        (Some(left), Some(right)) if !left.contains('*') => Ok(glob_matches(right, left)),
-        (Some(left), Some(right)) if !right.contains('*') => Ok(glob_matches(left, right)),
-        (Some(left), Some(right)) if literal_ends_diverge(left, right) => Ok(false),
-        (Some(left), Some(right)) => globs_overlap(left, right, remaining_states),
+    let (Some(left), Some(right)) = (left, right) else {
+        return Ok(true);
+    };
+    match (literal_ends(left), literal_ends(right)) {
+        (None, None) => {
+            charge_work(remaining_work, left.len() + right.len())?;
+            Ok(false)
+        }
+        (None, Some(_)) | (Some(_), None) => {
+            charge_work(remaining_work, left.len().saturating_mul(right.len()))?;
+            let (pattern, literal) = if left.contains('*') {
+                (left, right)
+            } else {
+                (right, left)
+            };
+            Ok(glob_matches(pattern, literal))
+        }
+        (Some((left_prefix, left_suffix)), Some((right_prefix, right_suffix))) => {
+            charge_work(
+                remaining_work,
+                left_prefix.len() + left_suffix.len() + right_prefix.len() + right_suffix.len(),
+            )?;
+            Ok(
+                (left_prefix.starts_with(right_prefix) || right_prefix.starts_with(left_prefix))
+                    && (left_suffix.ends_with(right_suffix) || right_suffix.ends_with(left_suffix)),
+            )
+        }
     }
 }
 
-/// Every match of a wildcard pattern starts with the literal text before its
-/// first `*` and ends with the text after its last `*`. If either end
-/// disagrees within the shorter length, no value matches both, which is
-/// decided in linear time without spending overlap budget.
-fn literal_ends_diverge(left: &str, right: &str) -> bool {
-    let (left_prefix, right_prefix) = (literal_prefix(left), literal_prefix(right));
-    let (left_suffix, right_suffix) = (literal_suffix(left), literal_suffix(right));
-    !(left_prefix.starts_with(right_prefix) || right_prefix.starts_with(left_prefix))
-        || !(left_suffix.ends_with(right_suffix) || right_suffix.ends_with(left_suffix))
+/// The literal text before a pattern's first `*` and after its last `*`, or
+/// `None` for a pattern without a wildcard.
+///
+/// These ends decide overlap between two wildcard patterns exactly. Every match
+/// starts with the prefix and ends with the suffix, so a disagreement within the
+/// shorter length rules out a common match. If both ends agree, the longer
+/// prefix, each pattern's middle literals, then the longer suffix match both,
+/// because each `*` can absorb what the other pattern added.
+fn literal_ends(pattern: &str) -> Option<(&str, &str)> {
+    let (prefix, _) = pattern.split_once('*')?;
+    let (_, suffix) = pattern.rsplit_once('*')?;
+    Some((prefix, suffix))
 }
 
-fn literal_prefix(pattern: &str) -> &str {
-    pattern.split('*').next().unwrap_or_default()
-}
-
-fn literal_suffix(pattern: &str) -> &str {
-    pattern.rsplit('*').next().unwrap_or_default()
+fn charge_work(remaining_work: &mut u64, bytes: usize) -> Result<(), ()> {
+    *remaining_work = remaining_work.checked_sub(bytes as u64).ok_or(())?;
+    Ok(())
 }
 
 pub(crate) fn glob_matches(pattern: &str, value: &str) -> bool {
@@ -307,70 +343,11 @@ pub(crate) fn glob_matches(pattern: &str, value: &str) -> bool {
     p == pattern.len()
 }
 
-/// Product traversal of two `*` glob NFAs. The sentinel represents any byte
-/// not currently present as a literal and keeps the alphabet finite.
-const MAX_TOTAL_GLOB_OVERLAP_STATES: usize = 4_000_000;
-
-fn globs_overlap(left: &str, right: &str, remaining_states: &mut usize) -> Result<bool, ()> {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
-    let width = right.len().checked_add(1).ok_or(())?;
-    let states = left
-        .len()
-        .checked_add(1)
-        .and_then(|height| height.checked_mul(width))
-        .ok_or(())?;
-    if states > *remaining_states {
-        return Err(());
-    }
-    *remaining_states -= states;
-    let mut seen = vec![false; states];
-    let mut queue = std::collections::VecDeque::from([(0usize, 0usize)]);
-    while let Some((i, j)) = queue.pop_front() {
-        let state = i * width + j;
-        if seen[state] {
-            continue;
-        }
-        seen[state] = true;
-        if i == left.len() && j == right.len() {
-            return Ok(true);
-        }
-        if left.get(i) == Some(&b'*') {
-            queue.push_back((i + 1, j));
-        }
-        if right.get(j) == Some(&b'*') {
-            queue.push_back((i, j + 1));
-        }
-        let mut alphabet = vec![0];
-        if let Some(&byte) = left.get(i).filter(|&&byte| byte != b'*') {
-            alphabet.push(byte);
-        }
-        if let Some(&byte) = right.get(j).filter(|&&byte| byte != b'*') {
-            alphabet.push(byte);
-        }
-        for byte in alphabet {
-            let next_left = transition(left, i, byte);
-            let next_right = transition(right, j, byte);
-            if let (Some(next_left), Some(next_right)) = (next_left, next_right) {
-                queue.push_back((next_left, next_right));
-            }
-        }
-    }
-    Ok(false)
-}
-
-fn transition(pattern: &[u8], index: usize, byte: u8) -> Option<usize> {
-    match pattern.get(index) {
-        Some(b'*') => Some(index),
-        Some(&literal) if literal == byte => Some(index + 1),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        CompileError, CompiledRule, find_conflict, glob_matches, globs_overlap,
-        literal_ends_diverge, paths_overlap,
+        CompileError, CompiledRule, ConflictCheckError, HostPattern, find_conflict,
+        find_conflict_within, glob_matches, hosts_overlap, paths_overlap,
     };
 
     fn rule(
@@ -436,19 +413,117 @@ mod tests {
         assert_eq!(find_conflict(&rules).unwrap(), Some((0, 1)));
     }
 
-    #[test]
-    fn wildcard_overlap_search_refuses_to_exceed_its_budget() {
-        let pattern = format!("/{}", "*".repeat(1_022));
-        let states = 1_024 * 1_024;
-        let mut budget = states - 1;
-        assert_eq!(globs_overlap(&pattern, &pattern, &mut budget), Err(()));
-        let mut budget = states;
-        assert_eq!(globs_overlap(&pattern, &pattern, &mut budget), Ok(true));
-        assert_eq!(budget, 0);
+    /// Asserts that `paths` fit in exactly `cost` bytes of work, in either order,
+    /// and report `expected` then; one byte less fails closed.
+    fn assert_exact_work(paths: [&str; 2], cost: u64, expected: Option<(usize, usize)>) {
+        for [first, second] in [paths, [paths[1], paths[0]]] {
+            let rules = vec![
+                rule(Some("api"), None, Some(first), "payment.read"),
+                rule(Some("api"), None, Some(second), "payment.refund"),
+            ];
+            assert_eq!(
+                find_conflict_within(&rules, cost).unwrap(),
+                expected,
+                "{first} {second}"
+            );
+            assert!(
+                matches!(
+                    find_conflict_within(&rules, cost - 1),
+                    Err(ConflictCheckError::TooComplex {
+                        first: 0,
+                        second: 1
+                    })
+                ),
+                "{first} {second}"
+            );
+        }
     }
 
     #[test]
-    fn wildcards_with_different_literal_ends_skip_overlap_search() {
+    fn conflict_work_is_charged_for_every_eligible_comparison() {
+        // Literal ends that disagree, at the prefix and at the suffix.
+        assert_exact_work(["/ab*", "/ac*"], 6, None);
+        assert_exact_work(["/*ab", "/*ac"], 6, None);
+        // Literal ends that agree establish the conflict at the same price.
+        assert_exact_work(["/v*a*bc", "/v*ab*c"], 7, Some((0, 1)));
+        // Exact paths read both patterns in full.
+        assert_exact_work(["/a", "/b"], 4, None);
+    }
+
+    #[test]
+    fn conflict_work_is_not_charged_for_pairs_that_need_no_comparison() {
+        let long = format!("/{}/*", "a".repeat(1_000));
+        let cases = [
+            // Identical patterns are a conflict, not an analysis failure.
+            (
+                rule(Some("api"), None, Some(&long), "payment.read"),
+                rule(Some("api"), None, Some(&long), "payment.refund"),
+                Some((0, 1)),
+            ),
+            // Same class.
+            (
+                rule(Some("api"), None, Some("/a*"), "payment.read"),
+                rule(Some("api"), None, Some("/b*"), "payment.read"),
+                None,
+            ),
+            // Different specificity.
+            (
+                rule(Some("api"), None, Some("/ab*"), "payment.read"),
+                rule(Some("api"), None, Some("/b*"), "payment.refund"),
+                None,
+            ),
+            // Different host.
+            (
+                rule(Some("api"), None, Some("/a*"), "payment.read"),
+                rule(Some("www"), None, Some("/b*"), "payment.refund"),
+                None,
+            ),
+            // Different method.
+            (
+                rule(Some("api"), Some("GET"), Some("/a*"), "payment.read"),
+                rule(Some("api"), Some("POST"), Some("/b*"), "payment.refund"),
+                None,
+            ),
+        ];
+        for (first, second, expected) in cases {
+            assert_eq!(find_conflict_within(&[first, second], 0).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn exhausted_work_budget_rejects_the_same_configurations_in_any_order() {
+        let mut rules = (0..6)
+            .map(|index| {
+                let class = if index % 2 == 0 {
+                    "payment.read"
+                } else {
+                    "payment.refund"
+                };
+                rule(None, None, Some(&format!("/p{index}/*")), class)
+            })
+            .collect::<Vec<_>>();
+        // Three rules of each class form nine eligible pairs at 8 bytes each.
+        let total = 9 * 8;
+        for _ in 0..2 {
+            assert_eq!(find_conflict_within(&rules, total).unwrap(), None);
+            assert!(find_conflict_within(&rules, total - 1).is_err());
+            rules.reverse();
+        }
+    }
+
+    #[test]
+    fn wildcard_host_overlap_respects_label_boundaries() {
+        let any = |base: &str| HostPattern::AnySubdomain(base.into());
+        assert!(hosts_overlap(&any("acme.com"), &any("acme.com")));
+        assert!(hosts_overlap(&any("x.acme.com"), &any("acme.com")));
+        assert!(hosts_overlap(&any("acme.com"), &any("x.acme.com")));
+        assert!(!hosts_overlap(&any("evilacme.com"), &any("acme.com")));
+        assert!(!hosts_overlap(&any("acme.com"), &any("evilacme.com")));
+        assert!(!hosts_overlap(&any("a.acme.com"), &any("b.acme.com")));
+    }
+
+    #[test]
+    fn wildcards_with_different_literal_ends_do_not_conflict() {
         let rules = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
             .iter()
             .enumerate()
@@ -483,8 +558,16 @@ mod tests {
             .filter(|word| word.len() <= 3)
             .flat_map(|word| {
                 (0..=word.len()).flat_map(move |at| {
-                    let (head, tail) = word.split_at(at);
-                    [format!("{head}*{tail}"), format!("*{head}*{tail}")]
+                    (at..=word.len()).flat_map(move |end| {
+                        let (head, rest) = word.split_at(at);
+                        let (middle, tail) = rest.split_at(end - at);
+                        [
+                            format!("{head}{middle}*{tail}"),
+                            format!("*{head}{middle}*{tail}"),
+                            format!("{head}*{middle}*{tail}"),
+                            format!("{head}*{middle}*{tail}*"),
+                        ]
+                    })
                 })
             })
             .collect::<Vec<_>>();
@@ -493,17 +576,10 @@ mod tests {
                 let witness = words
                     .iter()
                     .any(|word| glob_matches(left, word) && glob_matches(right, word));
-                let mut budget = usize::MAX;
+                let mut budget = u64::MAX;
                 assert_eq!(
                     paths_overlap(Some(left), Some(right), &mut budget),
                     Ok(witness),
-                    "{left} {right}"
-                );
-                // Compatible literal ends are also sufficient: the prefix,
-                // both middles, then the suffix is a common match.
-                assert_eq!(
-                    !literal_ends_diverge(left, right),
-                    witness,
                     "{left} {right}"
                 );
             }

@@ -627,22 +627,32 @@ The configuration loader should call these primitives rather than implement its 
 
 A conservative conflict detector must not silently accept an unresolved ambiguity. If exact overlap checking is not implemented for a supported pattern type, either restrict that pattern type during validation or reject potentially conflicting patterns with an explicit error.
 
-Wildcard overlap analysis has one 4,000,000-state budget for the complete
-load, rather than a pair-count limit. Only pairs with different action
-classes, equal specificity, and overlapping methods and hosts consume that
-budget. Equal patterns (including two omitted paths) are recognized as
-conflicts before budgeted analysis. This keeps unrelated or same-class rules
-cheap while failing closed when a configuration would require excessive work.
-Pairs containing an exact path are resolved directly against that literal.
-Two wildcard patterns are first compared on their literal text before the
-first `*` and after the last `*`: if either end disagrees within the shorter
-length, no path matches both, decided in linear time without budget. Compatible
-ends already guarantee an overlap (the shared prefix, both patterns' middle
-literals, then the shared suffix matches both), so the product-NFA search only
-confirms a conflict and the budget acts as a safeguard rather than a limit
-ordinary configurations reach. Distinct REST prefixes such as
-`/v1/customers/*` and `/v1/charges/*` therefore load at any count up to the
-rule limit.
+Conflict analysis has one work budget for the complete load: 4,000,000,000
+bytes read while comparing paths. Only pairs with different action classes,
+equal specificity, and overlapping methods and hosts are charged. Equal patterns
+(including two omitted paths) are recognized as conflicts before any charge, so
+an identical pair is reported as a conflict rather than as an analysis failure.
+Exhausting the budget rejects the load with `ConflictAnalysisTooComplex`; nothing
+is accepted unchecked.
+
+Every other eligible pair is charged for the bytes it reads, whether or not the
+paths turn out to overlap. Two exact paths overlap only when equal, and are
+charged both lengths. Two wildcard patterns are decided by their literal ends,
+and are charged the length of both prefixes and both suffixes. They overlap
+exactly when the text before the first `*` agrees within the shorter length and
+the text after the last `*` does too. A disagreement rules out a common match.
+If both agree, the longer prefix, each pattern's middle literals, then the longer
+suffix match both patterns, because each `*` can absorb what the other pattern
+added. No search is needed, and an exhaustive test checks this against every
+short string. An exact path and a wildcard pattern cannot have equal specificity,
+so that pairing does not arise during `load`.
+
+The charge depends only on the two patterns and is symmetric, so a configuration
+without conflicts uses the same total in any rule order: accepting or rejecting
+it does not depend on order or on the machine. A configuration that both contains
+a conflict and exhausts the budget is always rejected, but which of the two errors
+it reports can depend on order. Ordinary REST shapes such as `/v1/customers/*` and
+`/v1/charges/*` usually differ in specificity and are not charged at all.
 
 Overlap is decided for patterns as written. Patterns that differ only by case are not conflicts at load, because they name different paths on a case-sensitive server; they are handled at classification (§9).
 
@@ -664,7 +674,9 @@ bounded to 256 bytes and marked as truncated. `Toml` carries the parser's
 message with the same bound, prefixed by the 1-based line and column; it does
 not quote the source line, because the `toml` crate's own rendering would echo
 an arbitrarily long line into logs or HTTP responses. Conflicts identify both
-rule locations and their mapping sets.
+rule locations and their mapping sets. `ConflictAnalysisTooComplex` names the
+two rules being compared when the budget ran out (§13); they show where the work
+limit was reached, not that those rules are at fault.
 
 For example:
 
@@ -721,11 +733,15 @@ Requirements:
 - Avoid unnecessary allocations where practical.
 
 Configuration limits are deliberate: a normalized path pattern is at most
-1,024 bytes, a load accepts at most 10,000 rules, and wildcard conflict
-analysis spends at most 4,000,000 product-NFA states across the entire load
-(only pairs whose literal prefixes and suffixes agree reach that search).
+1,024 bytes, a load accepts at most 10,000 rules, and conflict analysis reads at
+most 4,000,000,000 bytes of paths across the entire load (§13).
 The limits bound configuration-controlled memory and CPU use while preserving
-the linear runtime scan.
+the linear runtime scan. The budget is counted in bytes rather than time, so it
+gives no fixed runtime; on the benchmark machine (Apple Silicon, release build)
+the slowest accepted configuration took about 1.3 s and rejections took under
+1 s. At 10,000 rules with alternating classes it admits literal ends of about 80
+bytes. The pair loop itself is not charged, so unrelated rules stay free, and
+host comparisons are bounded by the DNS length limit.
 Request inputs are also bounded: methods are at most 32 bytes and paths are
 at most 8 KiB after query or fragment handling. Normalization is linear in the
 input length: dot-segment removal uses a segment stack rather than shifting a

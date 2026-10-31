@@ -63,10 +63,12 @@ Methods: HTTP tokens, folded to uppercase in rules and requests. RFC 9110 makes 
 Paths: Empty request path normalizes to /; the path portion is capped at 8 KiB after query/fragment removal, and nonempty path must begin /. Drop query/fragment before matching (reject them in patterns). Reject empty segments (`//`) in requests and patterns alike, backslashes, literal semicolons, and non-ASCII or non-graphic bytes; servers can strip `;` path parameters before routing. Keep trailing slashes; for a request ending in `/`, return None when its slash-stripped spelling has a different nonempty classification, because servers can strip the sent slash. Also compare an ASCII-lowercased spelling outside percent escapes against case-folded copies of the configured patterns, and its stripped form; any different nonempty result is rejected to catch common case-insensitive routers without rewriting the normal case-sensitive match. Equally specific rules with different classes matching any spelling (patterns that differ only by case tie once folded) also return None, so rule order cannot decide. `*` in a request path is an ordinary character. Decode only escaped unreserved characters (RFC 3986 6.2.2) and upper-case other escapes, identically for rules and requests; never double-decode. Normalize request dot segments; configured `.` or `..` segments are rejected rather than silently corrected. Reject invalid percent encoding and encoded separators (%2F, %5C). A configured path must start with /; omission matches all valid paths; * matches zero or more characters including /, and multiple wildcards are supported. /v1/refunds/* matches /v1/refunds/ but not /v1/refunds.
 
 Loading limits: normalized configured path patterns are capped at 1,024 bytes,
-a classifier accepts at most 10,000 rules, and all eligible wildcard overlap
-checks share a 4,000,000-state budget. Unrelated hosts and same-class pairs do
-not consume this budget, nor do wildcard pairs whose literal text before the
-first `*` or after the last `*` disagrees; an exhausted budget rejects the load
+a classifier accepts at most 10,000 rules, and conflict analysis reads at most
+4,000,000,000 bytes of paths per load. Only pairs with different classes, equal
+specificity, and overlapping methods and hosts are charged, and identical patterns
+are reported as conflicts before any charge. Two wildcard patterns overlap exactly
+when their literal text before the first `*` and after the last `*` agrees within
+the shorter length, so no search is needed. An exhausted budget rejects the load
 explicitly.
 
 Specificity: Lexicographic ranking: (1) host kind (exact/bare over wildcard), then base-host label depth; bare-host rules only match bare host, (2) exact path > wildcard path > absent path; among wildcards, more literal characters > fewer wildcards > longer literal prefix, (3) explicit method > absent method. Mapping base hosts need at least two DNS labels, so a wildcard cannot be rooted at a public-suffix-like single label; multi-label public suffixes (`co.uk`) are not detected and are the mapping author's responsibility. Never use file or insertion order to break ties. If any remaining equal-specificity rules could classify the same valid request differently, reject the configuration during load.

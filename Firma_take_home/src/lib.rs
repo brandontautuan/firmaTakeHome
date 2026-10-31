@@ -58,9 +58,9 @@ pub enum LoadError {
         first: RuleLocation,
         second: RuleLocation,
     },
-    /// Two wildcard patterns require more overlap-analysis state than the
-    /// loader safely permits. Rejecting prevents configuration-driven memory
-    /// exhaustion without silently accepting an unresolved ambiguity.
+    /// Checking the configuration for conflicts needs more comparison work than
+    /// the loader permits; the two rules are where the budget ran out. Rejecting
+    /// keeps `load` responsive without silently accepting an unchecked ambiguity.
     #[error("{first} and {second} require excessive conflict analysis")]
     ConflictAnalysisTooComplex {
         first: RuleLocation,

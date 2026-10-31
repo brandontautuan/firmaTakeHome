@@ -137,7 +137,7 @@ async fn conflict_analysis_only_charges_eligible_pairs() {
 }
 
 #[tokio::test]
-async fn same_class_rules_do_not_consume_overlap_budget() {
+async fn same_class_rules_do_not_consume_conflict_work_budget() {
     let rules = (0..600)
         .map(|index| rule(None, None, Some(&format!("/rule/{index}")), "repo.read"))
         .collect::<String>();
@@ -146,7 +146,7 @@ async fn same_class_rules_do_not_consume_overlap_budget() {
 }
 
 #[tokio::test]
-async fn distinct_exact_paths_do_not_consume_wildcard_overlap_budget() {
+async fn distinct_exact_paths_fit_within_conflict_work_budget() {
     let rules = (0..1_000)
         .map(|index| {
             rule(
@@ -166,7 +166,7 @@ async fn distinct_exact_paths_do_not_consume_wildcard_overlap_budget() {
 }
 
 #[tokio::test]
-async fn wildcards_with_distinct_literal_prefixes_do_not_consume_overlap_budget() {
+async fn wildcards_with_distinct_literal_prefixes_fit_within_conflict_work_budget() {
     let rules = (0..1_000)
         .map(|index| {
             rule(
@@ -201,11 +201,48 @@ async fn adversarial_wildcard_pairs_with_different_suffixes_load_quickly() {
         })
         .collect::<String>();
     let input = set("Adversarial", "acme.com", &rules);
-    // The patterns end in different literals, so no pair can overlap and none
-    // needs the bounded product search (Arch.md §16).
+    // The patterns end in different literals, so no pair can overlap, and the
+    // wildcards between them cost nothing to compare (Arch.md §13).
     let started = std::time::Instant::now();
     assert!(load(&[&input]).await.is_ok());
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
+}
+
+fn alternating_paths(count: usize, path: impl Fn(usize) -> String) -> String {
+    let rules = (0..count)
+        .map(|index| {
+            let class = if index % 2 == 0 {
+                "repo.read"
+            } else {
+                "repo.write"
+            };
+            rule(None, None, Some(&path(index)), class)
+        })
+        .collect::<String>();
+    set("Generated", "acme.com", &rules)
+}
+
+#[tokio::test]
+async fn ten_thousand_short_equal_length_rules_load() {
+    let exact = alternating_paths(10_000, |index| format!("/api/{index:05}"));
+    assert!(load(&[&exact]).await.is_ok());
+    let wildcard = alternating_paths(10_000, |index| format!("/api/{index:05}/*"));
+    assert!(load(&[&wildcard]).await.is_ok());
+}
+
+#[tokio::test]
+async fn long_literal_ends_exhaust_the_conflict_work_budget() {
+    let padding = "a".repeat(1_010);
+    for input in [
+        alternating_paths(10_000, |index| format!("/{padding}{index:05}/*")),
+        alternating_paths(10_000, |index| format!("/*{index:05}{padding}")),
+        alternating_paths(10_000, |index| format!("/{padding}{index:05}/x")),
+    ] {
+        assert!(matches!(
+            load(&[&input]).await,
+            Err(LoadError::ConflictAnalysisTooComplex { .. })
+        ));
+    }
 }
 
 #[tokio::test]
