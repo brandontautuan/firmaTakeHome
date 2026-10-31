@@ -574,6 +574,43 @@ Rechecked at the base and already fixed, with no code change needed:
   (still loads), Audit 11 LOW pair loop (10,000 rules, 138 ms), Baseline LOW per-call
   allocations.
 
+## Audit 16 — conflict-analysis work and mapping-name diagnostics (2026-10-31)
+
+Base `e3eb655`. Probes use release builds from clean exports; timings are the
+median of three `load` calls.
+
+- [ ] **MED — Nothing limits total conflict-analysis work; adversarial configurations stall `load` for seconds** (src/matcher.rs `find_conflict`, `paths_overlap`, `hosts_overlap`)
+  - Since `e738b54`, compatible literal ends always mean a real conflict, which
+    ends the load. `globs_overlap` therefore runs at most once per load and costs
+    at most about 1.05M of its 4M states, so the budget can never run out and
+    `ConflictAnalysisTooComplex` is unreachable. The real cost is elsewhere and
+    is not charged to anything. `load` runs inside an HTTP handler (README).
+
+    | configuration (alternating classes) | size | result at `e3eb655` |
+    |---|---|---|
+    | 2,000 rules, ~1 KiB wildcard prefix | 2.1 MB | loads, 342 ms |
+    | 5,000 rules, ~1 KiB wildcard prefix | 5.3 MB | loads, 2,174 ms |
+    | 10,000 rules, ~1 KiB wildcard prefix | 10.6 MB | loads, 8,559 ms |
+    | 10,000 rules, ~1 KiB wildcard suffix | 10.6 MB | loads, 4,404 ms |
+    | 10,000 rules, ~1 KiB exact path | 10.6 MB | loads, 3,377 ms |
+    | 10,000 distinct wildcard hosts | 1.1 MB | loads, 2,981 ms |
+    | 10,000 long distinct wildcard hosts | 2.9 MB | loads, 4,976 ms |
+
+  - Resolve by deciding overlap from literal ends alone, removing the
+    unreachable search, and charging the bytes read for each eligible path pair
+    to one total budget. `hosts_overlap` also allocates twice per wildcard-host
+    pair; remove that, since hosts stay uncharged (H6: unrelated hosts cost no
+    budget).
+
+- [ ] **LOW — Mapping names are not bounded in diagnostics** (src/lib.rs `RuleLocation`, `LoadError::InvalidSet`; src/config.rs `parse`)
+  - `diagnostic_value` covers rejected values and TOML messages, but not `name`.
+    A 1 MB `name` gives a 1,000,062-byte message with a bad rule and a
+    2,000,111-byte message with a conflict.
+  - `load` also clones the full name into one `RuleLocation` per rule, so memory
+    grows with name length × rule count.
+  - Resolve by bounding the name where diagnostics are built. Long names stay
+    valid configuration.
+
 ## Baseline gaps (pre-existing, found during Audit 1)
 
 - [x] **MED — No generated-input robustness tests** (Arch.md §17 "Robustness — **started in `c2e2283` and `db5a4c7`; resolved in `943c586`: `tests/robustness.rs` now has generated malformed-method, host, and path checks, a reference wildcard matcher, and rule-order, method-case, and equivalent-spelling properties**
