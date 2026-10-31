@@ -26,11 +26,25 @@ pub(crate) struct Rule {
 /// Converts one TOML document to a checked mapping set. Errors carry the
 /// set's declared name when the document parsed far enough to have one.
 pub(crate) fn parse(input: &str) -> Result<MappingSet, (Option<String>, SetError)> {
-    let set: MappingSet = toml::from_str(input).map_err(|error| (None, SetError::Toml(error)))?;
+    let set: MappingSet = toml::from_str(input)
+        .map_err(|error| (None, SetError::Toml(toml_diagnostic(input, &error))))?;
     match validate(&set) {
         Ok(()) => Ok(set),
         Err(error) => Err((Some(set.name), error)),
     }
+}
+
+/// `toml`'s own rendering quotes the offending source line, which can be
+/// arbitrarily long. Report the position and a bounded message instead.
+fn toml_diagnostic(input: &str, error: &toml::de::Error) -> String {
+    let message = diagnostic_value(error.message().trim_end());
+    let Some(before) = error.span().and_then(|span| input.get(..span.start)) else {
+        return message;
+    };
+    let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+    let line = before.matches('\n').count() + 1;
+    let column = before[line_start..].chars().count() + 1;
+    format!("line {line}, column {column}: {message}")
 }
 
 fn validate(set: &MappingSet) -> Result<(), SetError> {
@@ -350,6 +364,25 @@ rules = []
         );
         let error = parse(&input).unwrap_err().1.to_string();
         assert!(error.contains("[truncated]"));
+        assert!(error.len() < 400, "diagnostic was {} bytes", error.len());
+    }
+
+    #[test]
+    fn bounds_toml_errors_and_reports_their_location() {
+        let long_line = format!("{VALID}\npath = = {:?}", "x".repeat(1_000_000));
+        let error = parse(&long_line).unwrap_err().1.to_string();
+        assert!(error.len() < 400, "diagnostic was {} bytes", error.len());
+        assert!(error.contains("line 10, column"), "{error}");
+
+        let long_key = VALID.replace(
+            "action_class = \"payment.read\"",
+            &format!(
+                "{} = 1\naction_class = \"payment.read\"",
+                "k".repeat(1_000_000)
+            ),
+        );
+        let error = parse(&long_key).unwrap_err().1.to_string();
+        assert!(error.contains("[truncated]"), "{error}");
         assert!(error.len() < 400, "diagnostic was {} bytes", error.len());
     }
 

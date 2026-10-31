@@ -73,8 +73,10 @@ pub enum LoadError {
 /// The reason a single mapping set is invalid.
 #[derive(Debug, thiserror::Error)]
 pub enum SetError {
+    /// The document is not valid TOML or does not have the mapping-set shape.
+    /// The message gives the line and column and is bounded in length.
     #[error("invalid TOML: {0}")]
-    Toml(#[from] toml::de::Error),
+    Toml(String),
     #[error("unsupported format version {0}; expected 1")]
     UnsupportedFormatVersion(u32),
     #[error("{0} must not be empty or malformed")]
