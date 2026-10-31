@@ -348,7 +348,9 @@ fn transition(pattern: &[u8], index: usize, byte: u8) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompileError, CompiledRule, ConflictCheckError, find_conflict, glob_matches};
+    use super::{
+        CompileError, CompiledRule, ConflictCheckError, find_conflict, glob_matches, paths_overlap,
+    };
 
     fn rule(
         subdomain: Option<&str>,
@@ -434,13 +436,51 @@ mod tests {
         ));
     }
 
+    /// Any overlap has a witness no longer than the two patterns' literals
+    /// combined, so short strings decide every pair exhaustively.
+    #[test]
+    fn overlap_analysis_agrees_with_exhaustive_search() {
+        let mut words = vec![String::new()];
+        for start in 0.. {
+            let Some(word) = words.get(start).cloned() else {
+                break;
+            };
+            if word.len() < 6 {
+                words.extend(["a", "b"].map(|letter| format!("{word}{letter}")));
+            }
+        }
+        let patterns = words
+            .iter()
+            .filter(|word| word.len() <= 3)
+            .flat_map(|word| {
+                (0..=word.len()).flat_map(move |at| {
+                    let (head, tail) = word.split_at(at);
+                    [format!("{head}*{tail}"), format!("*{head}*{tail}")]
+                })
+            })
+            .collect::<Vec<_>>();
+        for left in &patterns {
+            for right in &patterns {
+                let witness = words
+                    .iter()
+                    .any(|word| glob_matches(left, word) && glob_matches(right, word));
+                let mut budget = usize::MAX;
+                assert_eq!(
+                    paths_overlap(Some(left), Some(right), &mut budget),
+                    Ok(witness),
+                    "{left} {right}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn explicit_methods_win_only_after_host_and_path_ties() {
         let any_method = rule(Some("api"), None, Some("/v1/*"), "payment.read");
         let get = rule(Some("api"), Some("GET"), Some("/v1/*"), "payment.create");
         assert!(get.compare_specificity(&any_method).is_gt());
         assert!(get.matches("GET", "api.acme.com", "/v1/x", false));
-        // `matches` receives normalized method tokens from `classify`.
+        // Comparison is exact: `classify` chooses which reading to pass in.
         assert!(!get.matches("get", "api.acme.com", "/v1/x", false));
         assert!(!get.matches("POST", "api.acme.com", "/v1/x", false));
         let lower = rule(Some("api"), Some("get"), Some("/v1/*"), "payment.create");

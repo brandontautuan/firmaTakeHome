@@ -7,6 +7,7 @@ mod config;
 mod matcher;
 mod normalize;
 
+use std::cmp::Ordering;
 use std::fmt;
 
 use config::parse;
@@ -118,6 +119,9 @@ pub struct Classifier {
     rules: Vec<CompiledRule>,
 }
 
+/// Equally specific rules with different classes match one reading of a request.
+struct AmbiguousMatch;
+
 /// Parse, validate, compile, and combine mapping sets. Configuration conflicts
 /// are rejected here, so mapping-file ordering never affects classification.
 pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
@@ -201,39 +205,76 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
 impl Classifier {
     /// Classifies a request. Malformed input is deliberately unclassified
     /// rather than coerced into a potentially broader rule.
+    ///
+    /// Servers differ on case and trailing slashes, so one request can have
+    /// several readings. The path as sent and the uppercase method select the
+    /// class; any other reading that names a different class denies the request.
     pub async fn classify(&self, method: &str, host: &str, path: &str) -> Option<&str> {
-        let method = normalize::method(method)?;
+        let folded_method = normalize::method(method)?;
         let host = normalize::host(host)?;
         let path = normalize::request_path(path)?;
-        let class = self.best_match(&method, &host, &path, false);
+        let class = self.best_match(&folded_method, &host, &path, false).ok()?;
+
         let lowercase = normalize::lowercase_path_outside_escapes(&path);
-        let mut alternatives = vec![(lowercase.as_str(), true)];
+        let mut spellings = vec![(path.as_str(), false), (lowercase.as_str(), true)];
         if let Some(stripped) = path.strip_suffix('/').filter(|rest| !rest.is_empty()) {
-            alternatives.push((stripped, false));
+            spellings.push((stripped, false));
         }
         if let Some(stripped) = lowercase.strip_suffix('/').filter(|rest| !rest.is_empty()) {
-            alternatives.push((stripped, true));
+            spellings.push((stripped, true));
         }
-        for (alternative, case_folded_path) in alternatives {
-            let alternative_class = self.best_match(&method, &host, alternative, case_folded_path);
-            if alternative_class.is_some() && alternative_class != class {
+        // Rule methods are uppercase, so passing a differently cased method
+        // through unchanged gives its case-sensitive reading (RFC 9110): only
+        // method-less rules can match it.
+        let mut methods = vec![folded_method.as_str()];
+        if method != folded_method {
+            methods.push(method);
+        }
+        let readings = methods
+            .iter()
+            .flat_map(|method| spellings.iter().map(move |spelling| (*method, *spelling)))
+            .skip(1); // The reading that selected `class` above.
+        for (method, (path, case_folded_path)) in readings {
+            let other = self
+                .best_match(method, &host, path, case_folded_path)
+                .ok()?;
+            if other.is_some() && other != class {
                 return None;
             }
         }
         class
     }
 
+    /// Returns the class of the most specific matching rule. `load` rejects
+    /// equal-specificity conflicts for paths as written, but patterns that
+    /// differ only by case tie once they are folded. Reporting that tie, rather
+    /// than choosing a winner, keeps the result independent of rule order.
     fn best_match(
         &self,
         method: &str,
         host: &str,
         path: &str,
         case_folded_path: bool,
-    ) -> Option<&str> {
-        self.rules
+    ) -> Result<Option<&str>, AmbiguousMatch> {
+        let mut best: Option<&CompiledRule> = None;
+        let mut tied = false;
+        for rule in self
+            .rules
             .iter()
             .filter(|rule| rule.matches(method, host, path, case_folded_path))
-            .max_by(|left, right| left.compare_specificity(right))
-            .map(|rule| rule.action_class)
+        {
+            match best.map(|best| (rule.compare_specificity(best), best.action_class)) {
+                None | Some((Ordering::Greater, _)) => {
+                    best = Some(rule);
+                    tied = false;
+                }
+                Some((Ordering::Equal, class)) if class != rule.action_class => tied = true,
+                Some(_) => {}
+            }
+        }
+        if tied {
+            return Err(AmbiguousMatch);
+        }
+        Ok(best.map(|rule| rule.action_class))
     }
 }

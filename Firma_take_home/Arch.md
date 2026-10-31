@@ -336,8 +336,10 @@ It must contain at least two DNS labels; single-label public suffix-like bases
 such as `com` are too broad for a wildcard rule.
 
 Subdomain values must be either `*` or one or more valid DNS labels. Per the README, the rule host is the subdomain followed by `host`, so `subdomain = "api.eu"` with `host = "acme.com"` names `api.eu.acme.com`.
-Numeric exact subdomain labels are valid when the combined hostname is valid;
-standalone hexadecimal IPv4-like authorities are rejected.
+Numeric exact subdomain labels are valid when the combined hostname is valid.
+A hostname whose final label is a WHATWG IPv4 number is rejected: all decimal
+digits, or `0x`/`0X` followed by zero or more hex digits. Hex-looking labels in
+any other position, as in `0x7f.acme.com`, are ordinary DNS labels.
 
 #### Method validation
 
@@ -345,7 +347,7 @@ standalone hexadecimal IPv4-like authorities are rejected.
 - Reject whitespace.
 - Reject empty strings.
 - Reject `method = "*"`; omitting `method` is the only spelling for any valid method.
-- Fold method tokens to uppercase in both rules and requests. Methods are case-sensitive on the wire, but Fetch and Node upper-case common methods and some servers fold case; without folding, `delete` would skip a `DELETE` rule and reach a broader method-less one.
+- Fold method tokens to uppercase in both rules and requests. Rules that differ only by method case are therefore the same method. Request handling is described in §9.
 - A missing method means any valid method.
 
 #### Path validation
@@ -426,18 +428,26 @@ Normalize incoming request metadata before matching.
 - Reject userinfo.
 - Reject invalid domain labels.
 - Reject unsupported IP literal representations.
-- Reject hostnames whose final label is all numeric, including abbreviated or noncanonical IPv4-like forms.
+- Reject hostnames whose final label is a WHATWG IPv4 number (all digits, or `0x`/`0X` plus zero or more hex digits), including abbreviated or noncanonical IPv4-like forms such as `127.1` and `0x7f.0x1`.
+- Reject non-ASCII names; IDNs must arrive in their `xn--` form.
 - Preserve subdomain boundaries.
 
 `api.acme.com` must never match `evilapi.acme.com` unless explicitly configured to do so.
 
 #### Method
 
-- Fold to uppercase (see method validation).
 - Validate according to HTTP token syntax.
 - Reject malformed tokens.
 - Reject methods longer than 32 bytes.
 - Do not infer method semantics.
+- Match on the uppercase form, and treat a method whose spelling folding changed as having two readings.
+
+RFC 9110 makes methods case-sensitive, so `get` is formally not `GET`. In practice Fetch and Node upper-case common methods (Fetch leaves `patch` alone), some servers fold case, and case-sensitive routers such as Go's `ServeMux` send `get` past a `GET` route to a catch-all handler. The classifier cannot see which applies, so it supports both interpretations:
+
+- Folded: `get` is `GET`, and every rule is eligible.
+- Case-sensitive: `get` is a distinct method, and only method-less rules are eligible.
+
+If both readings name a class and the classes differ, return `None`. Action classes have no sensitivity order, so neither reading can be preferred: `delete` must not become `payment.read` when a `DELETE` rule says `payment.refund`, and `get` must not become `payment.read` when the method-less rule it reaches on a case-sensitive server says `payment.refund`. Uppercase methods have one reading. As with the path checks below, a reading that finds no rule is not a disagreement, so `patch` still classifies under a lone `PATCH` rule.
 
 #### Path
 
@@ -449,10 +459,15 @@ Normalize incoming request metadata before matching.
 - Reject literal semicolons: Tomcat, Jetty, and Spring-style servers may strip path parameters before routing.
 - Keep trailing slashes. When a request path ends in `/`, also compare the slash-stripped spelling; if it classifies to a different action, return `None`. This protects against servers that strip a sent trailing slash while preserving the classification of a request sent without one.
 - Also compare an ASCII-lowercased spelling outside percent escapes against lowercased compiled rule patterns, plus its slash-stripped spelling when applicable. If any such spelling has a different nonempty classification, return `None`. This detects disagreement with common case-insensitive routers without changing the case-sensitive match itself.
+- Return `None` when equally specific rules with different classes match any spelling. Load-time conflict detection compares patterns as written, so `/v1/Refunds` and `/v1/refunds` can load together but tie once folded; denying keeps the result independent of rule order.
+- Each path spelling is evaluated under each method reading above, so one request is compared under at most eight readings.
 - Decode escaped unreserved characters, so `%72efunds` matches `refunds` and `%2e%2e` is a dot segment.
 - Normalize dot segments.
 - Reject malformed percent encoding.
 - Reject encoded `/` and `\` where interpretations are ambiguous.
+- Reject non-ASCII and non-graphic bytes; they must arrive percent-encoded.
+- A `/`-ending path produced by dot-segment removal counts as a trailing slash: `/a/b/..` is `/a/`.
+- Treat `*` in a request path as an ordinary character. Only configured patterns have wildcards, and `%2A` in a pattern is a literal escape.
 - Avoid double decoding.
 - Reject unsupported or ambiguous representations.
 
@@ -466,6 +481,7 @@ HTTP clients and upstream servers may interpret some paths differently. The clas
 - Method-override headers such as `X-HTTP-Method-Override` are not visible to this API.
 - A server that decodes a path twice can interpret `%252e` differently.
 - Request bodies and provider-specific routing data are outside this metadata-only classifier.
+- Comparing readings cannot detect a server that behaves differently only where the other reading has no rule. `patch` under a lone `PATCH` rule classifies, although a case-sensitive server does not treat it as `PATCH`; it is the only rule that names the request.
 
 ### 10. Rule matching
 
@@ -482,7 +498,7 @@ For `host = "acme.com"`:
 
 #### Method matching
 
-- Exact methods match after both sides are folded to uppercase.
+- Exact methods match after both sides are folded to uppercase. A differently cased request method is also checked as a distinct method (§9).
 - An omitted method matches any valid method.
 - Explicit methods outrank omitted methods when higher-priority dimensions are equivalent.
 
@@ -615,6 +631,8 @@ cheap while failing closed when a configuration would require excessive work.
 Pairs containing an exact path are resolved directly against that literal;
 only two wildcard patterns consume product-NFA budget.
 
+Overlap is decided for patterns as written. Patterns that differ only by case are not conflicts at load, because they name different paths on a case-sensitive server; they are handled at classification (§9).
+
 Avoid silently selecting the first encountered rule.
 
 ### 14. Structured error handling
@@ -651,8 +669,9 @@ Avoid using `unwrap()` or `expect()` for user-provided configuration.
 3. Compare normalized inputs against compiled rules.
 4. Identify every applicable candidate or maintain the best candidate while scanning.
 5. Select the highest-specificity match.
-6. Return its action class.
-7. Return `None` if no rule matches.
+6. Compare the other method and path readings (§9), and return `None` if any names a different class or ties between classes.
+7. Return the selected action class.
+8. Return `None` if no rule matches.
 
 It must not:
 
@@ -679,7 +698,7 @@ Requirements:
 - No locks should be necessary for ordinary classification.
 - Avoid expensive preprocessing on every request.
 - Precompute specificity metadata during loading.
-- Compile path wildcard representations during loading.
+- Normalize path patterns and precompute their case-folded copies during loading.
 - Keep classification deterministic under concurrent requests.
 - Avoid unnecessary allocations where practical.
 
@@ -689,7 +708,13 @@ analysis spends at most 4,000,000 product-NFA states across the entire load.
 The limits bound configuration-controlled memory and CPU use while preserving
 the linear runtime scan.
 Request inputs are also bounded: methods are at most 32 bytes and paths are
-at most 8 KiB after query or fragment handling.
+at most 8 KiB after query or fragment handling. Normalization is linear in the
+input length: dot-segment removal uses a segment stack rather than shifting a
+buffer, so a path of many `/..` segments costs no more than any other.
+Wildcard matching is O(pattern length × path length) per eligible rule, so the
+worst-case cost of one `classify` scales with those limits and the eight
+readings. Mapping sets are trusted to the same degree as the policy they drive;
+a request alone cannot reach this cost without such patterns being configured.
 
 The public functions remain asynchronous because the starter API requires it, but internal parsing and matching do not require asynchronous tasks.
 
@@ -791,6 +816,16 @@ Use property-based testing or fuzz-style generated inputs to confirm:
 - Concurrent classification does not mutate shared state.
 
 Generated request coverage must include valid matching requests as well as malformed input, and assert that a meaningful portion reaches an action class.
+
+`tests/robustness.rs` uses a seeded generator with no extra dependency, so failures reproduce. It checks that:
+
+- Generated methods, hosts, and paths classify when valid and return `None` under a catch-all rule set once a malformed form is introduced.
+- Wildcard matching agrees with an independent reference matcher, with both outcomes represented.
+- Generated rule sets give the same load outcome and classifications when rules are shuffled and split across sets.
+- A classification under a non-uppercase method never contradicts the folded or the case-sensitive reading.
+- Equivalent spellings of a valid request classify identically.
+
+`src/matcher.rs` compares overlap analysis with exhaustive search over short patterns.
 
 Maintain all four existing example tests.
 

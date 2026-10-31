@@ -26,30 +26,29 @@ pub(crate) fn host(input: &str) -> Option<String> {
     }
 
     let name = name.strip_suffix('.').unwrap_or(name);
-    if !is_dns_name(name)
-        || name.parse::<std::net::Ipv4Addr>().is_ok()
-        || is_hex_ipv4_like(name)
-        || name
-            .rsplit_once('.')
-            .map_or(name, |(_, label)| label)
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())
-    {
+    let final_label = name.rsplit_once('.').map_or(name, |(_, label)| label);
+    if !is_dns_name(name) || is_ipv4_number(final_label) {
         return None;
     }
     Some(name.to_ascii_lowercase())
 }
 
-fn is_hex_ipv4_like(value: &str) -> bool {
-    value.strip_prefix("0x").is_some_and(|digits| {
-        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
-    })
+/// WHATWG URL parsers treat a host as IPv4 when its final label is a number:
+/// all decimal digits, or `0x` followed by zero or more hex digits.
+fn is_ipv4_number(label: &str) -> bool {
+    let digits = label
+        .strip_prefix("0x")
+        .or_else(|| label.strip_prefix("0X"));
+    match digits {
+        Some(digits) => digits.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        None => label.bytes().all(|byte| byte.is_ascii_digit()),
+    }
 }
 
 /// Validates an HTTP token and folds it to uppercase. HTTP methods are
-/// case-sensitive on the wire, but clients and servers commonly normalize
-/// them; folding prevents a lowercase spelling from bypassing a stricter
-/// uppercase rule and falling through to a broader rule.
+/// case-sensitive on the wire (RFC 9110), but clients and servers commonly
+/// normalize them. `classify` therefore also checks the case-sensitive reading
+/// of a method that folding changed, and denies the request on disagreement.
 pub(crate) fn method(input: &str) -> Option<String> {
     (1..=MAX_METHOD_BYTES)
         .contains(&input.len())
@@ -239,7 +238,9 @@ fn is_http_token(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{host, lowercase_path_outside_escapes, method, pattern_path, request_path};
+    use super::{
+        host, lowercase_path_outside_escapes, method, normalize_path, pattern_path, request_path,
+    };
 
     #[test]
     fn normalizes_hosts_and_rejects_ambiguous_authorities() {
@@ -254,6 +255,10 @@ mod tests {
             "127.1",
             "1.2.3.4.5",
             "0x7f000001",
+            "0X7F000001",
+            "0x7f.0x1",
+            "0x7f.0.0.0X1",
+            "acme.0x",
             "[::1]",
             "acme..com",
             "é.com",
@@ -261,6 +266,13 @@ mod tests {
         ] {
             assert_eq!(host(value), None, "{value}");
         }
+    }
+
+    #[test]
+    fn hex_looking_labels_are_only_rejected_in_the_final_position() {
+        assert_eq!(host("0x7f.acme.com"), Some("0x7f.acme.com".into()));
+        assert_eq!(host("0xg.com"), Some("0xg.com".into()));
+        assert_eq!(host("acme.0xg"), Some("acme.0xg".into()));
     }
 
     #[test]
@@ -327,6 +339,25 @@ mod tests {
         assert_eq!(pattern_path("/v1/*?debug=true"), None);
         assert_eq!(pattern_path("/v1//x"), None);
         assert_eq!(pattern_path("/v1/refunds;v=1"), None);
+    }
+
+    /// Guards against the buffer-shifting implementation this replaced, which
+    /// took O(segments * length). `normalize_path` has no size cap, so this runs
+    /// at 512 times the request limit, where that version shifts terabytes.
+    #[test]
+    fn normalization_stays_linear_well_beyond_the_request_limit() {
+        for (segment, expected_len) in [("/a/..", 1), ("/..", 1), ("/.", 1), ("/a", 1 << 22)] {
+            let input = segment.repeat((1 << 22) / segment.len());
+            let started = std::time::Instant::now();
+            let output = normalize_path(&input, false).unwrap();
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "{segment} took {:?}",
+                started.elapsed()
+            );
+            assert!(output.len() <= expected_len, "{segment}");
+            assert!(output.starts_with('/'));
+        }
     }
 
     #[test]
