@@ -109,7 +109,7 @@ tests, `Arch.md` and `agents.md` agree again on all Audit 1/2 items.
   - The standalone `DELETE` assertion duplicates the first iteration of the
     loop that follows. It's harmless; drop it for clarity.
 
-- [x] **LOW — Policy churn is visible in history** (`04ce80a` → `fc32096`, `e8d5871` → `8a43772`, `80ff741` → `fc32096`) — **resolved in the working tree on top of `2907b0d` (uncommitted): Arch.md §7/§9 record the rationale for each final policy. The history itself stays visible, so be ready to discuss it**
+- [x] **LOW — Policy churn is visible in history** (`04ce80a` → `fc32096`, `e8d5871` → `8a43772`, `80ff741` → `fc32096`) — **resolved in `943c586`: Arch.md §7/§9 record the rationale for each final policy. The history itself stays visible, so be ready to discuss it**
   - Three policies were reverted and then restored within ten minutes.
     Reviewers will read the history and transcript. Be ready to explain
     the decision for each, or record the rationale in Arch.md §7/§9 so the
@@ -279,7 +279,7 @@ consistent with "Reject unsupported IP literal representations".
     host (`subdomain.host`), or to request and base hosts only. Validate
     subdomains with the DNS-label rules alone.
 
-- [x] **LOW — Hex IPv4 forms still pass as hostnames** (src/normalize.rs `host`) — **incorrectly closed in `2907b0d`, which only rejected a whole name starting with lowercase `0x`; `0x7f.0x1` and `x.0X7F000001` still loaded (reproduced in Audit 15). Now resolved in the working tree on top of `2907b0d` (uncommitted): the final label is checked as this entry recommended. Tests: `hosts_ending_in_an_ipv4_number_are_rejected_in_configuration`, `normalizes_hosts_and_rejects_ambiguous_authorities`**
+- [x] **LOW — Hex IPv4 forms still pass as hostnames** (src/normalize.rs `host`) — **incorrectly closed in `2907b0d`, which only rejected a whole name starting with lowercase `0x`; `0x7f.0x1` and `x.0X7F000001` still loaded (reproduced in Audit 15). Now resolved in `943c586`: the final label is checked as this entry recommended. Tests: `hosts_ending_in_an_ipv4_number_are_rejected_in_configuration`, `normalizes_hosts_and_rejects_ambiguous_authorities`**
   - WHATWG URL parsing treats a host whose last label is `0x`-prefixed hex
     as IPv4: `0x7f000001` is `127.0.0.1`, and so is `0x7f.1`. Here
     `0x7f.1` is caught (last label `1`), but `0x7f000001` is not.
@@ -312,7 +312,7 @@ Gates (each from a clean export): `cargo fmt --check` OK · `cargo build`
 warnings` OK. Arch.md §17 now requires generated coverage to include valid,
 matching requests, and `db5a4c7` provides it.
 
-- [x] **LOW — Valid generated requests come from a fixed pool of 320 combinations** (tests/robustness.rs `generated_request`) — **resolved in the working tree on top of `2907b0d` (uncommitted): `generated_equivalent_spellings_classify_identically` mutates valid tuples (host case, port, trailing dot, query, fragment, dot segments, escapes, trailing slash), and the method, host, and path generators produce varied valid values**
+- [x] **LOW — Valid generated requests come from a fixed pool of 320 combinations** (tests/robustness.rs `generated_request`) — **resolved in `943c586`: `generated_equivalent_spellings_classify_identically` mutates valid tuples (host case, port, trailing dot, query, fragment, dot segments, escapes, trailing slash), and the method, host, and path generators produce varied valid values**
   - Valid tuples are picked from 4 methods × 4 hosts × 5 paths × 4 (the
     random branch), with no mutation. Trailing slashes, ports, host case,
     trailing dots and `//` never appear in a *valid* request.
@@ -372,7 +372,7 @@ Gates (clean export): `cargo fmt --check` OK · `cargo build` 0 warnings ·
   - Move the check next to `normalize::pattern_path`, or into
     `CompiledRule::new`.
 
-- [ ] **LOW — Pairwise loop is O(n²) even when no budget is spent**
+- [x] **LOW — Pairwise loop is O(n²) even when no budget is spent** — **closed as accepted (won't fix): within the 10,000-rule limit, and hardening.md rules out indexing beyond H6/H9**
   - 10,000 single-class exact rules took 136 ms to load in release (about
     50M pair comparisons), and debug builds are much slower. `load` runs in
     an HTTP handler (README).
@@ -527,9 +527,7 @@ Probes at `2907b0d`, release build:
 
 ## Audit 15 — final security and submission pass (2026-10-31)
 
-Base `2907b0d` plus uncommitted working-tree changes. No fixing commit exists
-yet, so entries closed here cite tests and name the working tree. Replace that
-wording with the hash when this work is committed.
+Base `2907b0d`; the fixes below were committed together as `943c586`.
 
 Gates (fresh `target/`): `cargo fmt --check` OK · `cargo build` 0 warnings ·
 `cargo test --all-targets` 83/83 (67 at the base) ·
@@ -543,7 +541,7 @@ Rechecked at the base and already fixed, with no code change needed:
   per call in release for the worst dot-heavy paths. The new guard fails when
   the old buffer-shifting algorithm is put back.
 
-- [x] **HIGH — Method folding could report a less sensitive class than a case-sensitive server executes** (`src/lib.rs` `classify`) — **resolved in the working tree on top of `2907b0d` (uncommitted)**
+- [x] **HIGH — Method folding could report a less sensitive class than a case-sensitive server executes** (`src/lib.rs` `classify`) — **resolved in `943c586`**
   - Rules `/x` → `payment.refund` and `GET /x` → `payment.read`: `get /x`
     returned `payment.read`. A case-sensitive router (Go's `ServeMux`) sends
     `get` to the catch-all handler, so the refund runs classified as a read.
@@ -556,7 +554,7 @@ Rechecked at the base and already fixed, with no code change needed:
     `method_case_classifies_when_both_readings_agree`,
     `generated_method_case_never_selects_a_class_one_reading_contradicts`.
 
-- [x] **HIGH — Classification depended on rule order for patterns differing only by case** (`src/lib.rs` `best_match`) — **resolved in the working tree on top of `2907b0d` (uncommitted)**
+- [x] **HIGH — Classification depended on rule order for patterns differing only by case** (`src/lib.rs` `best_match`) — **resolved in `943c586`**
   - Rules `/v1/Refunds` → `payment.refund` and `/v1/refunds` → `payment.read`
     pass the load check but tie once folded, and `max_by` picked the last.
     `/v1/Refunds` returned `None` in one order and `payment.refund` in the other,
@@ -564,7 +562,7 @@ Rechecked at the base and already fixed, with no code change needed:
   - Tests: `patterns_differing_only_by_case_do_not_depend_on_rule_order`,
     `generated_rule_sets_classify_identically_in_every_order`.
 
-- [ ] **LOW — `classify` is slow at the configuration limits with adversarial patterns** (`glob_matches`, new in this audit)
+- [x] **LOW — `classify` is slow at the configuration limits with adversarial patterns** (`glob_matches`, new in this audit) — **closed as documented (won't fix): needs hostile mapping files, recorded in Arch.md §16; hardening.md rules out further performance work**
   - 10,000 rules of about 1 KiB `/*a*a…b` against an 8 KiB `/`-ending path took
     0.64 s (`GET`) and 1.29 s (`get`) in release, compared with 0.4 ms for 10,000
     ordinary exact rules. It needs such patterns in the mapping files, so it
@@ -578,7 +576,7 @@ Rechecked at the base and already fixed, with no code change needed:
 
 ## Baseline gaps (pre-existing, found during Audit 1)
 
-- [x] **MED — No generated-input robustness tests** (Arch.md §17 "Robustness — **started in `c2e2283` and `db5a4c7`; resolved in the working tree on top of `2907b0d` (uncommitted): `tests/robustness.rs` now has generated malformed-method, host, and path checks, a reference wildcard matcher, and rule-order, method-case, and equivalent-spelling properties**
+- [x] **MED — No generated-input robustness tests** (Arch.md §17 "Robustness — **started in `c2e2283` and `db5a4c7`; resolved in `943c586`: `tests/robustness.rs` now has generated malformed-method, host, and path checks, a reference wildcard matcher, and rule-order, method-case, and equivalent-spelling properties**
   tests", agents.md completion gates)
   - Coverage is hand-picked inputs only. Arch asks for property-based or
     fuzz-style tests that `classify` never panics, is deterministic, and is
@@ -599,7 +597,7 @@ Rechecked at the base and already fixed, with no code change needed:
     predefined classes can be returned" hold by construction rather than by
     validation order.
 
-- [ ] **LOW — `classify` allocates per call** (method `String`, host
+- [x] **LOW — `classify` allocates per call** — **closed as won't fix: no benchmark shows it matters (Arch.md §15)** (method `String`, host
   `String`, path `String`, plus the stripped-slash re-scan)
   - Fine at the expected scale (Arch.md §15 allows a linear scan). Revisit
     only if benchmarks show it matters.
