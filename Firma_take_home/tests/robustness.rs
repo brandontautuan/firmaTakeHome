@@ -54,7 +54,7 @@ fn generated_request(state: &mut u64) -> (String, String, String) {
         "/",
     ][usize::try_from(next(state)).unwrap_or(0) % 5]
         .to_owned();
-    if next(state) % 5 == 0 {
+    if next(state).is_multiple_of(5) {
         (
             generated_text(state, 32),
             generated_text(state, 128),
@@ -132,7 +132,7 @@ fn below(state: &mut u64, limit: usize) -> usize {
 }
 
 fn chance(state: &mut u64, one_in: u64) -> bool {
-    next(state) % one_in == 0
+    next(state).is_multiple_of(one_in)
 }
 
 /// Inserts `value` at a random character boundary of `text`.
