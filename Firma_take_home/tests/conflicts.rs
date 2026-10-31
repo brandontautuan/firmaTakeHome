@@ -166,7 +166,27 @@ async fn distinct_exact_paths_do_not_consume_wildcard_overlap_budget() {
 }
 
 #[tokio::test]
-async fn adversarial_wildcard_pairs_exhaust_total_overlap_budget() {
+async fn wildcards_with_distinct_literal_prefixes_do_not_consume_overlap_budget() {
+    let rules = (0..1_000)
+        .map(|index| {
+            rule(
+                None,
+                None,
+                Some(&format!("/api/{index:05}/*")),
+                if index % 2 == 0 {
+                    "repo.read"
+                } else {
+                    "repo.write"
+                },
+            )
+        })
+        .collect::<String>();
+    let input = set("Prefix wildcards", "acme.com", &rules);
+    assert!(load(&[&input]).await.is_ok());
+}
+
+#[tokio::test]
+async fn adversarial_wildcard_pairs_with_different_suffixes_load_quickly() {
     let rules = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
         .iter()
         .enumerate()
@@ -181,10 +201,11 @@ async fn adversarial_wildcard_pairs_exhaust_total_overlap_budget() {
         })
         .collect::<String>();
     let input = set("Adversarial", "acme.com", &rules);
-    assert!(matches!(
-        load(&[&input]).await,
-        Err(LoadError::ConflictAnalysisTooComplex { .. })
-    ));
+    // The patterns end in different literals, so no pair can overlap and none
+    // needs the bounded product search (Arch.md §16).
+    let started = std::time::Instant::now();
+    assert!(load(&[&input]).await.is_ok());
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
 }
 
 #[tokio::test]

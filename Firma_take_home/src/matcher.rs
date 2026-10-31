@@ -256,8 +256,28 @@ fn paths_overlap(
         (Some(left), Some(right)) if !left.contains('*') && !right.contains('*') => Ok(false),
         (Some(left), Some(right)) if !left.contains('*') => Ok(glob_matches(right, left)),
         (Some(left), Some(right)) if !right.contains('*') => Ok(glob_matches(left, right)),
+        (Some(left), Some(right)) if literal_ends_diverge(left, right) => Ok(false),
         (Some(left), Some(right)) => globs_overlap(left, right, remaining_states),
     }
+}
+
+/// Every match of a wildcard pattern starts with the literal text before its
+/// first `*` and ends with the text after its last `*`. If either end
+/// disagrees within the shorter length, no value matches both, which is
+/// decided in linear time without spending overlap budget.
+fn literal_ends_diverge(left: &str, right: &str) -> bool {
+    let (left_prefix, right_prefix) = (literal_prefix(left), literal_prefix(right));
+    let (left_suffix, right_suffix) = (literal_suffix(left), literal_suffix(right));
+    !(left_prefix.starts_with(right_prefix) || right_prefix.starts_with(left_prefix))
+        || !(left_suffix.ends_with(right_suffix) || right_suffix.ends_with(left_suffix))
+}
+
+fn literal_prefix(pattern: &str) -> &str {
+    pattern.split('*').next().unwrap_or_default()
+}
+
+fn literal_suffix(pattern: &str) -> &str {
+    pattern.rsplit('*').next().unwrap_or_default()
 }
 
 pub(crate) fn glob_matches(pattern: &str, value: &str) -> bool {
@@ -349,7 +369,8 @@ fn transition(pattern: &[u8], index: usize, byte: u8) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompileError, CompiledRule, ConflictCheckError, find_conflict, glob_matches, paths_overlap,
+        CompileError, CompiledRule, find_conflict, glob_matches, globs_overlap,
+        literal_ends_diverge, paths_overlap,
     };
 
     fn rule(
@@ -416,7 +437,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_configurations_that_exceed_total_overlap_budget() {
+    fn wildcard_overlap_search_refuses_to_exceed_its_budget() {
+        let pattern = format!("/{}", "*".repeat(1_022));
+        let states = 1_024 * 1_024;
+        let mut budget = states - 1;
+        assert_eq!(globs_overlap(&pattern, &pattern, &mut budget), Err(()));
+        let mut budget = states;
+        assert_eq!(globs_overlap(&pattern, &pattern, &mut budget), Ok(true));
+        assert_eq!(budget, 0);
+    }
+
+    #[test]
+    fn wildcards_with_different_literal_ends_skip_overlap_search() {
         let rules = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
             .iter()
             .enumerate()
@@ -430,10 +462,7 @@ mod tests {
                 rule(Some("api"), None, Some(&path), class)
             })
             .collect::<Vec<_>>();
-        assert!(matches!(
-            find_conflict(&rules),
-            Err(ConflictCheckError::TooComplex { .. })
-        ));
+        assert_eq!(find_conflict(&rules).unwrap(), None);
     }
 
     /// Any overlap has a witness no longer than the two patterns' literals
@@ -468,6 +497,13 @@ mod tests {
                 assert_eq!(
                     paths_overlap(Some(left), Some(right), &mut budget),
                     Ok(witness),
+                    "{left} {right}"
+                );
+                // Compatible literal ends are also sufficient: the prefix,
+                // both middles, then the suffix is a common match.
+                assert_eq!(
+                    !literal_ends_diverge(left, right),
+                    witness,
                     "{left} {right}"
                 );
             }

@@ -628,8 +628,16 @@ classes, equal specificity, and overlapping methods and hosts consume that
 budget. Equal patterns (including two omitted paths) are recognized as
 conflicts before budgeted analysis. This keeps unrelated or same-class rules
 cheap while failing closed when a configuration would require excessive work.
-Pairs containing an exact path are resolved directly against that literal;
-only two wildcard patterns consume product-NFA budget.
+Pairs containing an exact path are resolved directly against that literal.
+Two wildcard patterns are first compared on their literal text before the
+first `*` and after the last `*`: if either end disagrees within the shorter
+length, no path matches both, decided in linear time without budget. Compatible
+ends already guarantee an overlap (the shared prefix, both patterns' middle
+literals, then the shared suffix matches both), so the product-NFA search only
+confirms a conflict and the budget acts as a safeguard rather than a limit
+ordinary configurations reach. Distinct REST prefixes such as
+`/v1/customers/*` and `/v1/charges/*` therefore load at any count up to the
+rule limit.
 
 Overlap is decided for patterns as written. Patterns that differ only by case are not conflicts at load, because they name different paths on a case-sensitive server; they are handled at classification (§9).
 
@@ -704,7 +712,8 @@ Requirements:
 
 Configuration limits are deliberate: a normalized path pattern is at most
 1,024 bytes, a load accepts at most 10,000 rules, and wildcard conflict
-analysis spends at most 4,000,000 product-NFA states across the entire load.
+analysis spends at most 4,000,000 product-NFA states across the entire load
+(only pairs whose literal prefixes and suffixes agree reach that search).
 The limits bound configuration-controlled memory and CPU use while preserving
 the linear runtime scan.
 Request inputs are also bounded: methods are at most 32 bytes and paths are

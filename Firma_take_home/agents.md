@@ -65,7 +65,9 @@ Paths: Empty request path normalizes to /; the path portion is capped at 8 KiB a
 Loading limits: normalized configured path patterns are capped at 1,024 bytes,
 a classifier accepts at most 10,000 rules, and all eligible wildcard overlap
 checks share a 4,000,000-state budget. Unrelated hosts and same-class pairs do
-not consume this budget; an exhausted budget rejects the load explicitly.
+not consume this budget, nor do wildcard pairs whose literal text before the
+first `*` or after the last `*` disagrees; an exhausted budget rejects the load
+explicitly.
 
 Specificity: Lexicographic ranking: (1) host kind (exact/bare over wildcard), then base-host label depth; bare-host rules only match bare host, (2) exact path > wildcard path > absent path; among wildcards, more literal characters > fewer wildcards > longer literal prefix, (3) explicit method > absent method. Mapping base hosts need at least two DNS labels, so a wildcard cannot be rooted at a public-suffix-like single label. Never use file or insertion order to break ties. If any remaining equal-specificity rules could classify the same valid request differently, reject the configuration during load.
 
