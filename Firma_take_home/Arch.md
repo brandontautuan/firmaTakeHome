@@ -333,7 +333,12 @@ Use an explicit ASCII DNS hostname contract.
 
 Configuration `host` should represent the bare domain.
 It must contain at least two DNS labels; single-label public suffix-like bases
-such as `com` are too broad for a wildcard rule.
+such as `com` are too broad for a wildcard rule. This is a heuristic, not a
+public-suffix check: multi-label suffixes such as `co.uk`, `com.au`, or
+`github.io` still load, and `subdomain = "*"` on one of them classifies every
+site under it. Avoiding such bases is the mapping author's responsibility,
+because the classifier performs no I/O and cannot consult the Public Suffix
+List.
 
 Subdomain values must be either `*` or one or more valid DNS labels. Per the README, the rule host is the subdomain followed by `host`, so `subdomain = "api.eu"` with `host = "acme.com"` names `api.eu.acme.com`.
 Numeric exact subdomain labels are valid when the combined hostname is valid.

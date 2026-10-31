@@ -160,7 +160,7 @@ async fn deeper_wildcard_base_host_wins_before_path_specificity() {
     let broad = r#"
 format_version = 1
 name = "Broad"
-host = "co.uk"
+host = "example.co.uk"
 
 [[rules]]
 subdomain = "*"
@@ -170,7 +170,7 @@ action_class = "llm.inference"
     let stripe = r#"
 format_version = 1
 name = "Stripe"
-host = "stripe.co.uk"
+host = "stripe.example.co.uk"
 
 [[rules]]
 subdomain = "*"
@@ -180,7 +180,7 @@ action_class = "payment.read"
     let classifier = load(&[broad, stripe]).await.unwrap();
     assert_eq!(
         classifier
-            .classify("POST", "api.stripe.co.uk", "/v1/refunds/x")
+            .classify("POST", "api.stripe.example.co.uk", "/v1/refunds/x")
             .await,
         Some("payment.read")
     );
