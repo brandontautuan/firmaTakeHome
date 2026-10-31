@@ -579,7 +579,7 @@ Rechecked at the base and already fixed, with no code change needed:
 Base `e3eb655`. Probes use release builds from clean exports; timings are the
 median of three `load` calls.
 
-- [ ] **MED — Nothing limits total conflict-analysis work; adversarial configurations stall `load` for seconds** (src/matcher.rs `find_conflict`, `paths_overlap`, `hosts_overlap`)
+- [x] **MED — Nothing limits total conflict-analysis work; adversarial configurations stall `load` for seconds** (src/matcher.rs `find_conflict`, `paths_overlap`, `hosts_overlap`) — **resolved in `eb32bb3`: literal ends decide overlap directly; `globs_overlap`, `transition`, and the state budget are gone; a 4 GB byte budget charges each eligible path pair; `hosts_overlap` no longer allocates. Tests: `long_literal_ends_exhaust_the_conflict_work_budget`, `ten_thousand_short_equal_length_rules_load`, `conflict_work_is_charged_for_every_eligible_comparison`, `conflict_work_is_not_charged_for_pairs_that_need_no_comparison`, `exhausted_work_budget_rejects_the_same_configurations_in_any_order`, `overlap_analysis_agrees_with_exhaustive_search`**
   - Since `e738b54`, compatible literal ends always mean a real conflict, which
     ends the load. `globs_overlap` therefore runs at most once per load and costs
     at most about 1.05M of its 4M states, so the budget can never run out and
@@ -602,7 +602,7 @@ median of three `load` calls.
     pair; remove that, since hosts stay uncharged (H6: unrelated hosts cost no
     budget).
 
-- [ ] **LOW — Mapping names are not bounded in diagnostics** (src/lib.rs `RuleLocation`, `LoadError::InvalidSet`; src/config.rs `parse`)
+- [x] **LOW — Mapping names are not bounded in diagnostics** (src/lib.rs `RuleLocation`, `LoadError::InvalidSet`; src/config.rs `parse`) — **resolved in `4bf671e`: `diagnostic_value` is applied where errors and source locations are built; the same 1 MB name now gives 333-byte and 653-byte messages. Tests: `invalid_set_errors_bound_long_mapping_names`, `conflict_errors_bound_long_mapping_names`, `long_mapping_names_are_valid_configuration`, `mapping_names_at_the_diagnostic_limit_are_not_truncated`**
   - `diagnostic_value` covers rejected values and TOML messages, but not `name`.
     A 1 MB `name` gives a 1,000,062-byte message with a bad rule and a
     2,000,111-byte message with a conflict.
@@ -610,6 +610,54 @@ median of three `load` calls.
     grows with name length × rule count.
   - Resolve by bounding the name where diagnostics are built. Long names stay
     valid configuration.
+
+Results at `4bf671e` (release, median of three `load` calls, Apple Silicon):
+
+| configuration (alternating classes) | `e3eb655` | `4bf671e` |
+|---|---|---|
+| 1,000 `/api/NNNNN/*` | loads, 16 ms | loads, 11 ms |
+| 10,000 `/api/NNNNN/*` | loads, 1,469 ms | loads, 959 ms |
+| 10,000 `/api/NNNNN` | loads, 473 ms | loads, 591 ms |
+| 2,000 rules, ~1 KiB wildcard prefix | loads, 342 ms | loads, 208 ms |
+| 5,000 rules, ~1 KiB wildcard prefix | loads, 2,174 ms | rejected, 420 ms |
+| 10,000 rules, ~1 KiB wildcard prefix | loads, 8,559 ms | rejected, 460 ms |
+| 10,000 rules, ~1 KiB wildcard suffix | loads, 4,404 ms | rejected, 360 ms |
+| 10,000 rules, ~1 KiB exact path | loads, 3,377 ms | rejected, 343 ms |
+| 10,000 distinct wildcard hosts | loads, 2,981 ms | loads, 304 ms |
+| 10,000 long distinct wildcard hosts | loads, 4,976 ms | loads, 599 ms |
+
+Budget sweep, 10,000 rules (`eb32bb3` matcher):
+
+| budget | slowest accepted (config) | 1 KiB prefix rejected in | 39-byte prefix |
+|---|---|---|---|
+| 1 GB | 975 ms (14-byte prefix) | 178 ms | rejected |
+| 2 GB | 1,027 ms (14-byte prefix) | 270 ms | loads |
+| 4 GB (chosen) | 1,317 ms (79-byte prefix) | 458 ms | loads |
+| 8 GB | 1,498 ms (79-byte prefix) | 859 ms | loads |
+
+4 GB admits literal ends of about 80 bytes at the rule limit. Going lower rejects
+plausible paths without much reducing the slowest accepted load, which per-pair
+overhead keeps near 1 s. The budget counts bytes, so these are measurements on
+this machine, not guarantees.
+
+Trade-offs: a configuration above the budget that `e3eb655` loaded slowly is now
+rejected. A long-pattern configuration of 5,000 rules is an example.
+`/api/NNNNN` at 10,000 rules is about 25% slower (473 to 591 ms); the cause was
+not investigated.
+
+Gates (clean export, fresh `target/`, each commit): fmt OK · build 0 warnings ·
+`cargo test --all-targets` 91/91 at `eb32bb3`, 95/95 at `4bf671e` · clippy OK.
+Rust 1.88: `cargo +1.88.0 test --all-targets` 95/95 at `4bf671e`. New regression
+tests failed against unfixed code first: `long_literal_ends_exhaust_the_conflict_work_budget`
+and three of the four mapping-name tests (`long_mapping_names_are_valid_configuration`
+passes before and after, by design). Breaking the literal-end comparison or the
+charge in four ways made the matcher tests fail each time.
+
+Closed findings rechecked at `4bf671e` through the public API, 39 of 39 probes
+passing: Audits 2, 4, 5, 8, 11, 12, 13, 14, 15 and H2, H3, H6–H10, H12. All 39
+earlier `[x]` entries stay closed. The Audit 11 pair-loop timing (136 ms) describes
+exact rules of that audit's shape, not every shape; the worst accepted load is
+above.
 
 ## Baseline gaps (pre-existing, found during Audit 1)
 
