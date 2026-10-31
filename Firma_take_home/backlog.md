@@ -404,7 +404,7 @@ Arch.md and agents.md together with the code.
   - Same probe, same result ("rule 230 and rule 363"). None of H7–H11 touch
     `paths_overlap`.
 
-- [ ] **LOW — Two-label minimum does not stop public-suffix bases; the new test relies on one** (src/config.rs `validate_host`, tests/classification.rs `deeper_wildcard_base_host_wins_before_path_specificity`)
+- [x] **LOW — Two-label minimum does not stop public-suffix bases; the new test relies on one** — **resolved in `4195007` by option (a): documented as a heuristic in Arch.md §7 and agents.md; the test uses `example.co.uk`** (src/config.rs `validate_host`, tests/classification.rs `deeper_wildcard_base_host_wins_before_path_specificity`)
   - `host = "co.uk"` with `subdomain = "*"` still loads.
   - Probe: `classify("POST", "api.bank.co.uk", "/transfer")` →
     `Some("llm.inference")`. Every `.co.uk` site gets whatever class the
@@ -487,7 +487,7 @@ Probes at `2907b0d`, release build:
 | Twilio-style `POST …/Accounts/*/Messages.json` under `/*` | `communication.external.send` |
 | same, lowercased | `None` (disagreement, as intended) |
 
-- [ ] **MED — Wildcard rules with distinct literal prefixes still exhaust the budget** (src/matcher.rs `paths_overlap` → `globs_overlap`)
+- [x] **MED — Wildcard rules with distinct literal prefixes still exhaust the budget** (src/matcher.rs `paths_overlap` → `globs_overlap`) — **resolved in `e738b54`: `literal_ends_diverge` rejects pairs whose prefix before the first `*` or suffix after the last `*` disagree, without budget; 1,000 `/api/NNNNN/*` rules load. Compatible ends were shown (exhaustive test) to imply overlap, so the 40-rule adversarial config now loads in under 1 s rather than hitting `ConflictAnalysisTooComplex` (H6 allows either); the budget remains as a safeguard and is tested on `globs_overlap` directly**
   - Probe: 400 rules `path = "/api/NNNNN/*"` alternating
     `repo.read`/`repo.write` → `ConflictAnalysisTooComplex` ("rule 212 and
     rule 307"). This is the most common REST mapping shape: `/v1/customers/*`,
@@ -503,7 +503,7 @@ Probes at `2907b0d`, release build:
 
     Add the 400-rule prefix-wildcard case as a test.
 
-- [ ] **LOW — `rust-version = "1.85"` is too low** (Cargo.toml)
+- [x] **LOW — `rust-version = "1.85"` is too low** (Cargo.toml) — **resolved in `27f5ee7`: set to 1.88; verified 1.87 fails (E0658) and 1.88 passes the full suite. `robustness.rs` now uses `is_multiple_of`, which the new MSRV makes clippy require**
   - `src/config.rs` uses `if let … &&` let-chains (e.g. lines 60–61 and
     69–71), which were stabilised in Rust **1.88**. Edition 2024 alone
     allows them only from 1.88.
@@ -514,7 +514,7 @@ Probes at `2907b0d`, release build:
   - Set `rust-version = "1.88"`. Only 1.95 and stable are installed here, so
     this was not verified by building on 1.85.
 
-- [ ] **LOW — TOML parse errors are still unbounded** (`SetError::Toml`)
+- [x] **LOW — TOML parse errors are still unbounded** (`SetError::Toml`) — **resolved in `54b778a`: `SetError::Toml(String)` holds line, column and a `diagnostic_value`-bounded message without the source snippet. Test: `bounds_toml_errors_and_reports_their_location`**
   - `toml`'s error display quotes the offending source line. Probe: an
     invalid document with a 1 MB line gives a **2,000,160-byte** `LoadError`
     message.
