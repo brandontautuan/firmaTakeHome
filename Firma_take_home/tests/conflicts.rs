@@ -245,6 +245,95 @@ async fn long_literal_ends_exhaust_the_conflict_work_budget() {
     }
 }
 
+/// Long names of 1, 2, 3, and 4-byte characters. The leading byte puts the
+/// 256-byte diagnostic limit inside a multibyte character where one exists.
+fn long_mapping_names(tag: &str) -> Vec<String> {
+    ["n", "é", "€", "😀"]
+        .map(|character| format!("{tag}x{}", character.repeat(300_000)))
+        .to_vec()
+}
+
+#[tokio::test]
+async fn invalid_set_errors_bound_long_mapping_names() {
+    for name in long_mapping_names("first-") {
+        let rules = rule(None, None, Some("/x"), "not.a.class");
+        let error = load(&[&set(&name, "acme.com", &rules)])
+            .await
+            .err()
+            .unwrap();
+        let message = error.to_string();
+        assert!(message.len() < 1_000, "message was {} bytes", message.len());
+        assert!(message.starts_with("mapping set 0 \"first-x"), "{message}");
+        assert!(message.contains("[truncated]"), "{message}");
+        assert!(message.contains("rule 0"), "{message}");
+    }
+}
+
+#[tokio::test]
+async fn conflict_errors_bound_long_mapping_names() {
+    for (first, second) in long_mapping_names("first-")
+        .into_iter()
+        .zip(long_mapping_names("second-"))
+    {
+        let error = load(&[
+            &set(
+                &first,
+                "acme.com",
+                &rule(None, None, Some("/x"), "repo.read"),
+            ),
+            &set(
+                &second,
+                "acme.com",
+                &format!(
+                    "{}{}",
+                    rule(None, None, Some("/y"), "repo.write"),
+                    rule(None, None, Some("/x"), "repo.write")
+                ),
+            ),
+        ])
+        .await
+        .err()
+        .unwrap();
+        let message = error.to_string();
+        assert!(message.len() < 1_000, "message was {} bytes", message.len());
+        assert!(message.starts_with("mapping set 0 \"first-x"), "{message}");
+        assert!(message.contains("mapping set 1 \"second-x"), "{message}");
+        assert!(message.contains("rule 0"), "{message}");
+        assert!(message.contains("rule 1"), "{message}");
+        assert_eq!(message.matches("[truncated]").count(), 2, "{message}");
+    }
+}
+
+#[tokio::test]
+async fn long_mapping_names_are_valid_configuration() {
+    for name in long_mapping_names("set-") {
+        let rules = rule(None, None, Some("/x"), "repo.read");
+        assert!(load(&[&set(&name, "acme.com", &rules)]).await.is_ok());
+    }
+}
+
+#[tokio::test]
+async fn mapping_names_at_the_diagnostic_limit_are_not_truncated() {
+    let rules = rule(None, None, Some("/x"), "not.a.class");
+    let at_limit = "n".repeat(256);
+    let message = load(&[&set(&at_limit, "acme.com", &rules)])
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(message.contains(&at_limit), "{message}");
+    assert!(!message.contains("[truncated]"), "{message}");
+
+    let over_limit = "n".repeat(257);
+    let message = load(&[&set(&over_limit, "acme.com", &rules)])
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(!message.contains(&over_limit), "{message}");
+    assert!(message.contains("[truncated]"), "{message}");
+}
+
 #[tokio::test]
 async fn rule_count_limit_has_a_dedicated_error() {
     let rules = (0..10_001)

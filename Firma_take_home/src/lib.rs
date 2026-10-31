@@ -43,7 +43,8 @@ pub(crate) fn diagnostic_value(value: &str) -> String {
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     /// One mapping set is invalid on its own. `name` is absent when the set
-    /// could not be parsed far enough to read it.
+    /// could not be parsed far enough to read it, and is truncated to the
+    /// diagnostic limit when long.
     #[error("mapping set {set}{}: {error}", display_name(.name))]
     InvalidSet {
         set: usize,
@@ -91,7 +92,8 @@ pub enum SetError {
     UnknownActionClass { rule: usize, action_class: String },
 }
 
-/// Where a rule came from, for conflict diagnostics.
+/// Where a rule came from, for conflict diagnostics. `name` is truncated to the
+/// diagnostic limit when long.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleLocation {
     pub set: usize,
@@ -135,6 +137,7 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
             name,
             error,
         })?;
+        let name = diagnostic_value(&set.name);
         for (rule_index, rule) in set.rules.into_iter().enumerate() {
             if rules.len() == MAX_TOTAL_RULES {
                 return Err(LoadError::TooManyRules {
@@ -174,14 +177,14 @@ pub async fn load(sets: &[&str]) -> Result<Classifier, LoadError> {
                 };
                 LoadError::InvalidSet {
                     set: set_index,
-                    name: Some(set.name.clone()),
+                    name: Some(name.clone()),
                     error,
                 }
             })?;
             rules.push(compiled);
             locations.push(RuleLocation {
                 set: set_index,
-                name: set.name.clone(),
+                name: name.clone(),
                 rule: rule_index,
             });
         }

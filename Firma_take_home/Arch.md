@@ -669,8 +669,11 @@ set-local `SetError` variants `Toml`, `UnsupportedFormatVersion`,
 
 Set and rule indexes are 0-based. Every set-local error identifies the input
 set and its declared name when parsing reached it. `InvalidRule` includes the
-rule index, field, and Debug-quoted rejected value; diagnostic values are
-bounded to 256 bytes and marked as truncated. `Toml` carries the parser's
+rule index, field, and Debug-quoted rejected value; diagnostic values and
+mapping names are bounded to 256 bytes at a UTF-8 character boundary and marked
+as truncated. A long name is still valid configuration; only its copies in
+diagnostics are bounded, which also keeps per-rule source locations small. `Toml`
+carries the parser's
 message with the same bound, prefixed by the 1-based line and column; it does
 not quote the source line, because the `toml` crate's own rendering would echo
 an arbitrarily long line into logs or HTTP responses. Conflicts identify both

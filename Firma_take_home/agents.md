@@ -89,7 +89,7 @@ When an interface is unresolved, write down a proposed contract and stop at your
 - test that demonstrates intended behavior;
 - any uncertainty that needs a single integration decision.
 Error reporting
-Favor thiserror variants that identify mapping set index, mapping name when known, rule index where applicable, invalid field/value, and the reason for rejection. Since load() accepts TOML text rather than paths, do not claim a file name is known. Conflicts report both rules' source locations. Rejected values and TOML parser messages are bounded to 256 bytes; TOML errors report line and column rather than quoting the source line. No silent correction of invalid config.
+Favor thiserror variants that identify mapping set index, mapping name when known, rule index where applicable, invalid field/value, and the reason for rejection. Since load() accepts TOML text rather than paths, do not claim a file name is known. Conflicts report both rules' source locations. Rejected values, mapping names, and TOML parser messages are bounded to 256 bytes; long mapping names remain valid configuration; TOML errors report line and column rather than quoting the source line. No silent correction of invalid config.
 Tests and completion gates
 Each agent runs its focused tests before commit. Only the Integrator claims full-project success. After integration, run from Firma_take_home/:
 cargo fmt --all -- --check

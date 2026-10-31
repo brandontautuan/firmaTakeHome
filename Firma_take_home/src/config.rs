@@ -24,13 +24,14 @@ pub(crate) struct Rule {
 }
 
 /// Converts one TOML document to a checked mapping set. Errors carry the
-/// set's declared name when the document parsed far enough to have one.
+/// set's declared name, bounded for diagnostics, when the document parsed far
+/// enough to have one.
 pub(crate) fn parse(input: &str) -> Result<MappingSet, (Option<String>, SetError)> {
     let set: MappingSet = toml::from_str(input)
         .map_err(|error| (None, SetError::Toml(toml_diagnostic(input, &error))))?;
     match validate(&set) {
         Ok(()) => Ok(set),
-        Err(error) => Err((Some(set.name), error)),
+        Err(error) => Err((Some(diagnostic_value(&set.name)), error)),
     }
 }
 
